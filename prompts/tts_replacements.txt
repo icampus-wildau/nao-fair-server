@@ -1,0 +1,3 @@
+# TTS word replacements (one pair per line): LEFT -> RIGHT
+# Whole-word, case-sensitive; # comments and blank lines are ignored.
+EDIH -> EDIEH

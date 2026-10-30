@@ -1,0 +1,30 @@
+{
+  "name": "NAO Fair server",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/parent,type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/parent/${localWorkspaceFolderBasename}",
+  "containerEnv": {
+    "UV_PROJECT_ENVIRONMENT": "/opt/venv",
+    "NLTK_DATA": "/opt/venv/nltk_data"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-venv,target=/opt/venv,type=volume"
+  ],
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "remoteUser": "vscode",
+  "runArgs": ["--network=host"],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.terminal.activateEnvironment": true
+      }
+    }
+  }
+}

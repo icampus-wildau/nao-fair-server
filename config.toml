@@ -1,0 +1,37 @@
+# Network address of the NAO robot. This sample uses a documentation address.
+# The live booth address is not stored here.
+nao_ip = "192.0.2.10"
+# NAOqi ports to try, in order. 9559 is the usual port; some robots use 9561.
+nao_ports = [9559, 9561]
+# Local WebSocket port where the robot audio bridge listens.
+audio_bridge_port = 8765
+
+# Speaker loudness from 0 (mute) to 100 (maximum).
+output_volume = 50
+# How fast the robot speaks; 100 is normal NAO speed (allowed range 50–400).
+tts_speed = 80
+
+# Body pose while running: Sit or Stand.
+posture = "Sit"
+
+# OpenAI-compatible chat model name.
+llm_model = "gpt-6-luna"
+# Seconds NAO keeps listening after it finishes speaking and after the guest pauses, before returning to idle.
+listening_timeout_secs = 3.5
+# Seconds of silence before conversation context is reset.
+context_reset_timeout_secs = 30.0
+# Maximum seconds to wait for the language model to respond.
+thinking_timeout_secs = 20.0
+# Delay after playback before the microphone is turned back on.
+unmute_delay_secs = 0.3
+
+# Gladia API region (for example eu-west).
+gladia_region = "eu-west"
+# Gladia end-of-speech sensitivity in seconds (higher = longer pauses tolerated).
+gladia_endpointing = 0.5
+# Maximum length of a single spoken utterance sent to Gladia, in seconds.
+gladia_max_utterance_secs = 10
+# Whether Gladia noise reduction / audio enhancement is enabled.
+gladia_audio_enhancer = true
+# Language code for speech recognition (for example de for German).
+gladia_language = "de"
