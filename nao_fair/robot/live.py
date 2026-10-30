@@ -326,6 +326,9 @@ class LiveLink:
             await _quiet(task)
 
     async def _watch_naoqi(self) -> None:
+        # One timed-out probe is the worker being busy (a posture move), not a
+        # dead link. Several in a row means robotName() is not coming back.
+        misses = 0
         try:
             while not self._closing:
                 await asyncio.sleep(2)
@@ -336,10 +339,18 @@ class LiveLink:
                         lambda: self.nao.session.service("ALSystem").robotName(),
                         timeout=3,
                     )
+                except TimeoutError:
+                    misses += 1
+                    if misses < 3 or self._closing:
+                        continue
+                    self.runtime.fail_disconnect("NAOqi link dropped: health check timed out")
+                    return
                 except Exception as exc:
                     if not self._closing:
                         self.runtime.fail_disconnect(f"NAOqi link dropped: {exc}")
                     return
+                else:
+                    misses = 0
         except asyncio.CancelledError:
             return
 
