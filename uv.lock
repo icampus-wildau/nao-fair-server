@@ -880,9 +880,9 @@ robot = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "nao-websocket-bridge-client", marker = "extra == 'robot'", editable = "../nao-websocket-bridge-client" },
-    { name = "nao-websocket-bridge-protocol", marker = "extra == 'robot'", editable = "../nao-websocket-bridge-protocol" },
-    { name = "naoqi-control", marker = "extra == 'robot'", editable = "../naoqi-control" },
+    { name = "nao-websocket-bridge-client", marker = "extra == 'robot'", specifier = ">=0.1.0" },
+    { name = "nao-websocket-bridge-protocol", marker = "extra == 'robot'", specifier = ">=1.0.0" },
+    { name = "naoqi-control", marker = "extra == 'robot'", specifier = ">=0.1.0" },
     { name = "pipecat-ai", extras = ["gladia"], marker = "extra == 'browser'", specifier = ">=1.7.0,<1.8" },
     { name = "pipecat-ai", extras = ["gladia"], marker = "extra == 'robot'", specifier = ">=1.7.0,<1.8" },
     { name = "pydantic", specifier = ">=2" },
@@ -900,33 +900,36 @@ provides-extras = ["browser", "robot", "dev"]
 [[package]]
 name = "nao-websocket-bridge-client"
 version = "0.1.0"
-source = { editable = "../nao-websocket-bridge-client" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "nao-websocket-bridge-protocol" },
     { name = "websockets" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "nao-websocket-bridge-protocol", specifier = ">=1.0.0" },
-    { name = "websockets", specifier = ">=13" },
+sdist = { url = "https://files.pythonhosted.org/packages/db/84/92c6989697e390c2c9e324922cf2015cbc020fda874352b7abf3127b3589/nao_websocket_bridge_client-0.1.0.tar.gz", hash = "sha256:27882dd28ea9c4c89f0bc72ca0f594e5d1716e7fc237c1244f097306eac365f8", size = 8246, upload-time = "2026-10-28T08:19:11.502Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/1b/541c1a0d9a15943eed3fae5665c6a78863d2c9bf442d6232c6949e0f6d39/nao_websocket_bridge_client-0.1.0-py3-none-any.whl", hash = "sha256:f3e7b7d047530daeb00736761ad2aa157ecc8b3861242157c2de3e6fda793fa8", size = 9067, upload-time = "2026-10-28T08:19:10.309Z" },
 ]
 
 [[package]]
 name = "nao-websocket-bridge-protocol"
 version = "1.0.0"
-source = { editable = "../nao-websocket-bridge-protocol" }
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/3a/1d3b7e7a26f6a00bae9d29dc7adbf2a8bc8769296f8ea3262139fd3b36e1/nao_websocket_bridge_protocol-1.0.0.tar.gz", hash = "sha256:487f1de8067ed7b296d485dd5e6748a6dd5da029c4bb153ba0b9eb15b555e9a6", size = 7112, upload-time = "2026-10-28T06:58:19.111Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/cb/0d0ad19a46e8d20d85d14ef5461f03aa1bb48ba8a3316ed8736a191702f5/nao_websocket_bridge_protocol-1.0.0-py3-none-any.whl", hash = "sha256:e64c15363a0d5a18fdac47ee7cb3579dd54bf69c6b271a6440ce412d3ac54141", size = 6980, upload-time = "2026-10-28T06:58:17.819Z" },
+]
 
 [[package]]
 name = "naoqi-control"
 version = "0.1.0"
-source = { editable = "../naoqi-control" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "qi" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "qi", specifier = ">=3.1.5" }]
+sdist = { url = "https://files.pythonhosted.org/packages/61/5b/762da1d54a21bd15e9089ba70064b4857563b9c4bacca9e93a14c4a4a354/naoqi_control-0.1.0.tar.gz", hash = "sha256:ae4465097116d4631a0bfa801c18f1ce7a72295f8b8e8f8831ce9b43fd4344f5", size = 23077, upload-time = "2026-10-28T08:18:39.771Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/15/7743c76121665c156f2cf9c44261fc268a531d8613243a73d3b395f3236d/naoqi_control-0.1.0-py3-none-any.whl", hash = "sha256:1c707a78809126f38722e997057d2549a0d0ca3db1118d9782933ef4285717a8", size = 21626, upload-time = "2026-10-28T08:18:38.629Z" },
+]
 
 [[package]]
 name = "nltk"

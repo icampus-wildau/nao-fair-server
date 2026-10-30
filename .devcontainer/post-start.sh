@@ -1,15 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
-for sibling in ../naoqi-control ../nao-websocket-bridge-client ../nao-websocket-bridge-protocol; do
-  if [[ ! -f "$sibling/pyproject.toml" ]]; then
-    echo "Missing $sibling. Open this folder from the NAO checkout that contains the sibling repositories." >&2
-    exit 1
-  fi
-done
-
-sudo mkdir -p /opt/venv
+# The named volume is mounted here before uv runs. An existing directory with
+# no interpreter is not an environment uv will replace.
 sudo chown -R vscode:vscode /opt/venv
+if [[ ! -x /opt/venv/bin/python ]]; then
+  find /opt/venv -mindepth 1 -delete
+  uv venv /opt/venv
+fi
+
 uv sync --locked --all-extras --compile-bytecode
 
 if [[ ! -e .venv ]]; then

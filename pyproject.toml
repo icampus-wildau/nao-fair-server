@@ -24,9 +24,9 @@ browser = [
     "rich>=13",
 ]
 robot = [
-    "naoqi-control",
-    "nao-websocket-bridge-client",
-    "nao-websocket-bridge-protocol",
+    "naoqi-control>=0.1.0",
+    "nao-websocket-bridge-client>=0.1.0",
+    "nao-websocket-bridge-protocol>=1.0.0",
     "pipecat-ai[gladia]>=1.7.0,<1.8",
     "rich>=13",
     "websockets>=13",
@@ -38,11 +38,6 @@ nao-fair = "nao_fair.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["nao_fair"]
-
-[tool.uv.sources]
-naoqi-control = { path = "../naoqi-control", editable = true }
-nao-websocket-bridge-client = { path = "../nao-websocket-bridge-client", editable = true }
-nao-websocket-bridge-protocol = { path = "../nao-websocket-bridge-protocol", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

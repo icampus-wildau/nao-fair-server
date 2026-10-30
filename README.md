@@ -10,7 +10,7 @@ Requires Python 3.12 or newer. The robot extra depends on [`qi`](https://pypi.or
 uv sync --locked --extra dev
 ```
 
-Robot audio and NAOqi need `naoqi-control`, `nao-websocket-bridge-client`, and `nao-websocket-bridge-protocol` checked out next to this directory:
+Robot audio and NAOqi install `naoqi-control`, `nao-websocket-bridge-client`, and `nao-websocket-bridge-protocol` from PyPI:
 
 ```bash
 uv sync --locked --extra robot

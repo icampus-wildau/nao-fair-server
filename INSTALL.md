@@ -6,7 +6,7 @@ Linux can skip this page and follow the [README](README.md).
 
 The frontend stays on the host in every setup. It does not use this container.
 
-This project pins Python 3.12. The checkout needs the sibling directories `naoqi-control`, `nao-websocket-bridge-client`, and `nao-websocket-bridge-protocol` next to `nao-fair-server`.
+This project pins Python 3.12. The container installs the robot libraries from PyPI. No neighboring checkouts are required.
 
 ## Dev Container
 
@@ -53,7 +53,7 @@ npm ci
 npm run build
 ```
 
-The server reads `NAO_FAIR_FRONTEND_DIR`, or `../nao-fair-frontend/dist` when that variable is unset, and serves it at [http://127.0.0.1:8000](http://127.0.0.1:8000). Rebuild after frontend changes.
+The server reads `NAO_FAIR_FRONTEND_DIR`, or `../nao-fair-frontend/dist` when that variable is unset, and serves it at [http://127.0.0.1:8000](http://127.0.0.1:8000). The Dev Container workspace is only this repository, so that relative path is absent there. Use the Vite dev server, or set `NAO_FAIR_FRONTEND_DIR` to a build mounted into the container. Rebuild after frontend changes.
 
 ## WSL
 
@@ -77,7 +77,6 @@ Run the frontend on the Windows host or inside WSL with `npm run dev`. WSL 2 pub
 |---|---|
 | Dev Container build fails | Start Docker Desktop and retry |
 | Host cannot open port 8000 | Enable **host networking** in Docker Desktop, then rebuild the container |
-| `Missing ../naoqi-control` | Keep the sibling checkouts next to `nao-fair-server` and reopen the container |
 | `no wheels with a matching platform tag` | Run Python in the Dev Container or WSL |
 | `.venv/bin/python` is not the container interpreter | Remove a host `.venv` and reopen, or call `uv run python` |
 | `connect()` hangs, then times out | Check the robot address, power, and ports 9559 and 9561 |
