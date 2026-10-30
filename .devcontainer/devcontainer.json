@@ -12,7 +12,7 @@
   "mounts": [
     "source=${localWorkspaceFolderBasename}-venv,target=/opt/venv,type=volume"
   ],
-  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "postStartCommand": ["bash", "-c", "tr -d '\\r' < .devcontainer/post-start.sh > /tmp/nao-fair-post-start.sh && bash /tmp/nao-fair-post-start.sh"],
   "remoteUser": "vscode",
   "runArgs": ["--network=host"],
   "customizations": {
