@@ -1,85 +1,84 @@
-# Windows and macOS
+# Install NAO Fair on Linux or Windows
 
-The [`qi`](https://pypi.org/project/qi/) package has no Windows wheels, and the robot extra depends on it. Python for this server has to run on Linux. The Dev Container does that inside Docker. WSL is the fallback when Docker is not available.
+NAO Fair consists of two public repositories: the server and the frontend.
+The robot microphone bridge is installed separately on the NAO. A working
+installation needs internet access for GitHub, PyPI and npm, and a current
+browser. For a real conversation, also provide the Gladia and OpenAI keys,
+network access to the NAO on TCP 9559 or 9561 and 8765, and install the
+[robot bridge](https://github.com/icampus-wildau/nao-websocket-bridge#install-from-a-laptop).
+No robot or cloud keys are needed to edit configuration offline.
 
-Linux can skip this page and follow the [README](README.md).
+## Linux
 
-The frontend stays on the host in every setup. It does not use this container.
-
-This project pins Python 3.12. The container installs the robot libraries from PyPI. No neighboring checkouts are required.
-
-## Dev Container
-
-Needs [Docker Desktop](https://www.docker.com/products/docker-desktop/) running, VS Code or Cursor, and the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension (`ms-vscode-remote.remote-containers`).
-
-In Docker Desktop, sign in, open **Settings → Resources → Network**, enable **Enable host networking**, then apply. The container uses the host network (`--network=host`), so the API on `127.0.0.1:8000` is the host's port 8000, and the server reaches the robot on the same routes as the host.
-
-1. Open the `nao-fair-server` folder in VS Code or Cursor.
-2. Command Palette → **Dev Containers: Reopen in Container**.
-3. Wait for the image build. On start the container runs `uv sync` with the dev, browser, and robot extras, and downloads the NLTK `punkt_tab` data when it is missing.
-4. Use the editor terminal. It is inside the container. Python is `/opt/venv/bin/python`. `uv run` uses that environment. When `.venv` is absent, start creates a symlink to `/opt/venv`, so `.venv/bin/python` is the same interpreter.
-
-Start the API:
+Use Linux x86-64 with Python 3.12 for robot support, [uv](https://docs.astral.sh/uv/getting-started/installation/), Git, and Node.js 20.19+ or 22.12+ with npm. The locked `qi` package does not provide a Linux ARM wheel. Clone both repositories beside each other:
 
 ```bash
-uv run python -m nao_fair
+mkdir -p nao-fair && cd nao-fair
+git clone https://github.com/icampus-wildau/nao-fair-server.git
+git clone https://github.com/icampus-wildau/nao-fair-frontend.git
+cd nao-fair-server
+uv sync --locked --extra dev --extra browser --extra robot
+mkdir -p -m 700 .venv/nltk_data
+uv run python -m nltk.downloader -d .venv/nltk_data punkt_tab
+cd ../nao-fair-frontend
+npm ci
+npm run build
+cd ../nao-fair-server
+uv run nao-fair
 ```
 
-Stop it with Ctrl+C. Restart after backend code changes. Stop an existing server on port 8000 before starting another.
+Open http://127.0.0.1:8000. Stop with Ctrl+C. Rebuild the frontend after changing it. The server automatically finds the sibling `dist` directory; for another layout set `NAO_FAIR_FRONTEND_DIR` to its absolute path before starting. For API-only use, or to install only some features, see [README.md](README.md#setup).
 
-Check `qi` alone:
+For frontend development instead, leave the backend running and in a second terminal run `npm run dev` from `nao-fair-frontend`, then open http://127.0.0.1:5173.
 
-```bash
-uv run python -c "import qi; s = qi.Session(); print('OK:', s); s.close()"
+## Windows with WSL 2
+
+Native Windows can run the frontend and API-only server, but `qi` has no Windows wheel. For robot support use WSL 2 or the Dev Container below.
+
+1. Install [WSL 2](https://learn.microsoft.com/windows/wsl/install), a Linux distribution, Git, Node.js and npm in that distribution, and [uv](https://docs.astral.sh/uv/getting-started/installation/) inside WSL. On Windows, VS Code with the WSL extension is optional.
+2. Open a WSL terminal and follow the **Linux** commands above inside it. Keep both checkouts together in WSL. Open http://127.0.0.1:8000 in a Windows browser.
+3. Install the bridge using its Linux/WSL instructions. Verify the Windows/WSL firewall and network permit access to the robot.
+
+Alternatively run the frontend on Windows and use its dev server; `npm run dev` proxies to the WSL server at localhost:8000. The production server can serve the frontend only if its build directory is accessible from WSL.
+
+## Windows with a Dev Container
+
+Install Git, Node.js 20.19+ or 22.12+ and npm on Windows; install Docker Desktop 4.34 or newer, VS Code or Cursor, and the Dev Containers extension. Docker Desktop must run Linux containers. Sign in to Docker Desktop and enable **Settings → Resources → Network → Enable host networking**, then apply and restart. Enhanced Container Isolation is incompatible with host networking.
+
+Clone both repositories as siblings in a host terminal:
+
+```powershell
+mkdir nao-fair
+cd nao-fair
+git clone https://github.com/icampus-wildau/nao-fair-server.git
+git clone https://github.com/icampus-wildau/nao-fair-frontend.git
 ```
 
-`No Application was created` is harmless when that check runs off the robot.
-
-### Frontend on the host
-
-In a host terminal, from `nao-fair-frontend` (outside the container):
+Open `nao-fair-server` in VS Code or Cursor and select **Dev Containers: Reopen in Container**. The container installs all three extras and NLTK data at start. In its terminal run:
 
 ```bash
+uv run nao-fair
+```
+
+On the Windows host, in a second terminal:
+
+```powershell
+cd nao-fair-frontend
 npm ci
 npm run dev
 ```
 
-Open [http://127.0.0.1:5173](http://127.0.0.1:5173). The dev server proxies `/api` to [http://127.0.0.1:8000](http://127.0.0.1:8000). `NAO_FAIR_API_URL` overrides that target.
+Open http://127.0.0.1:5173. The host frontend proxies the API to port 8000. The container only mounts the server checkout, so a host build is not automatically visible at port 8000. To serve a production build from the container, first run `npm run build` on the host, then add this entry to `mounts` in the server's `.devcontainer/devcontainer.json`, rebuild the container, and set `NAO_FAIR_FRONTEND_DIR=/opt/nao-fair-frontend/dist` in `containerEnv`:
 
-For the console served by the API, build on the host instead:
-
-```bash
-npm ci
-npm run build
+```json
+"source=${localWorkspaceFolder}/../nao-fair-frontend/dist,target=/opt/nao-fair-frontend/dist,type=bind,readonly"
 ```
 
-The server reads `NAO_FAIR_FRONTEND_DIR`, or `../nao-fair-frontend/dist` when that variable is unset, and serves it at [http://127.0.0.1:8000](http://127.0.0.1:8000). The Dev Container workspace is only this repository, so that relative path is absent there. Use the Vite dev server, or set `NAO_FAIR_FRONTEND_DIR` to a build mounted into the container. Rebuild after frontend changes.
-
-## WSL
-
-Use this when Docker Desktop is not available.
-
-Install WSL 2 (`wsl --install`), [uv](https://docs.astral.sh/uv/getting-started/installation/) inside the distro, and the [WSL extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-wsl) (`ms-vscode-remote.remote-wsl`). Open this folder with **WSL: Reopen Folder in WSL**, then:
-
-```bash
-uv python pin 3.12
-uv sync --locked --all-extras
-mkdir -p -m 700 .venv/nltk_data
-uv run python -m nltk.downloader -d .venv/nltk_data punkt_tab
-uv run python -m nao_fair
-```
-
-Run the frontend on the Windows host or inside WSL with `npm run dev`. WSL 2 publishes the server's localhost port 8000 on the Windows host, so the Vite proxy still targets `127.0.0.1:8000`.
+The host `dist` directory must exist before starting the container. Restart the server after rebuilding it. Install the robot bridge from WSL or directly on the NAO as described in the bridge README.
 
 ## Troubleshooting
 
-| Symptom | What to do |
-|---|---|
-| Dev Container build fails | Start Docker Desktop and retry |
-| Host cannot open port 8000 | Enable **host networking** in Docker Desktop, then rebuild the container |
-| `no wheels with a matching platform tag` | Run Python in the Dev Container or WSL |
-| `.venv/bin/python` is not the container interpreter | Remove a host `.venv` and reopen, or call `uv run python` |
-| `connect()` hangs, then times out | Check the robot address, power, and ports 9559 and 9561 |
-| `No Application was created` | Harmless when a `qi` check runs off the robot |
-
-Day-to-day server use after this setup is in the [README](README.md).
+- If the Python wheel cannot be installed, verify Python 3.12, Linux x86-64, and that the robot extra runs in WSL or a Linux container.
+- If localhost:8000 is unavailable in Docker Desktop, enable host networking and check that port 8000 is free.
+- If the robot is unreachable, check its address, network route, firewall and ports 9559/9561 and 8765. `uv run python -c "import qi; s = qi.Session(); print(s); s.close()"` checks the library without a robot.
+- `uv sync` removes extras not supplied in that invocation; pass all extras you want to keep.

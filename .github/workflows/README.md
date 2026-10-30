@@ -1,0 +1,1 @@
+The Linux job tests the locked robot, browser and development extras. The Windows job checks the API-only environment; robot support on Windows requires WSL or a Linux Dev Container and still needs an end-to-end hardware check.

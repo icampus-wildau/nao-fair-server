@@ -2,19 +2,21 @@
 
 Operator backend for one NAO. One process, no login, and no simulator. It listens on `127.0.0.1:8000` unless `NAO_FAIR_HOST` or `NAO_FAIR_PORT` is set.
 
-Requires Python 3.12 or newer. The robot extra depends on [`qi`](https://pypi.org/project/qi/), which has no Windows wheels. On Windows and macOS, run this server in the Dev Container described in [INSTALL.md](INSTALL.md).
+The API-only install supports Python 3.12 or newer. For the robot extra use Python **3.12** on Linux x86-64: `naoqi-control` requires it and the locked [`qi`](https://pypi.org/project/qi/) has no Windows or Linux ARM wheels. On Windows, use WSL or the Dev Container in [INSTALL.md](INSTALL.md).
 
 ## Setup
 
-```bash
-uv sync --locked --extra dev
-```
-
-Robot audio and NAOqi install `naoqi-control`, `nao-websocket-bridge-client`, and `nao-websocket-bridge-protocol` from PyPI:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and Git. Clone this repository on Linux, then choose one command for the features you need:
 
 ```bash
-uv sync --locked --extra robot
+git clone https://github.com/icampus-wildau/nao-fair-server.git
+cd nao-fair-server
+uv sync --locked --extra dev                              # API and tests, no robot
+# Or, for robot, browser microphone test, and tests together:
+uv sync --locked --extra dev --extra robot --extra browser
 ```
+
+`uv sync` removes extras not selected in the current command. When adding an extra later, include every extra you still need. The robot libraries come from PyPI, so their source checkouts are not required. See [INSTALL.md](INSTALL.md) for the complete frontend and platform setup.
 
 OpenAI and Gladia keys are set in the console under **System → Schlüssel**, or with `OPENAI_API_KEY` and `GLADIA_API_KEY`. The console never receives the stored value. `NAO_BRIDGE_TOKEN` is the microphone-bridge path token.
 
@@ -33,12 +35,15 @@ To serve the operator console from this process, build [nao-fair-frontend](https
 ## Test the conversation without a NAO
 
 ```bash
-uv sync --locked --extra browser
+# Include robot too if it is needed:
+uv sync --locked --extra dev --extra browser --extra robot
 mkdir -p -m 700 .venv/nltk_data
 uv run python -m nltk.downloader -d .venv/nltk_data punkt_tab
 ```
 
 Restart the server, open **System → Tests**, and click **Mikrofontest starten**. Browsers allow the microphone on `http://127.0.0.1:8000`, `http://localhost:8000`, or HTTPS. Set the Gladia key, and the OpenAI key when the LLM is enabled. Only one browser test can run at a time; disconnect a connected robot first.
+
+For a browser-only setup without robot support, omit `--extra robot` from the sync command.
 
 ```bash
 uv run pytest
