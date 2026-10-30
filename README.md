@@ -30,7 +30,7 @@ The API is at [http://127.0.0.1:8000](http://127.0.0.1:8000). Stop with Ctrl+C. 
 
 The process starts with no robot connected. Prompts, presets, setups, and settings can be edited and applied before a connection. A successful connection sends the applied configuration.
 
-To serve the operator console from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `npm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173).
+To serve the operator console from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `pnpm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
 ## Test the conversation without a NAO
 
