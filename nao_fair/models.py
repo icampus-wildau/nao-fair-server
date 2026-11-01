@@ -280,4 +280,10 @@ class SetupWrite(ApiModel):
     preset_ids: dict[str, str]
 
 
+class ScenarioWrite(LlmDraft):
+    name: str = Field(min_length=1)
+    description: str = ""
+    triggers: dict[str, TriggerBinding]
+
+
 ROBOT_FIELDS = tuple(RobotDraft.model_fields)

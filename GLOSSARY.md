@@ -34,35 +34,27 @@ _Avoid_: Unsaved file
 
 **Applied configuration**:
 The configuration the running backend is using now.
-_Avoid_: Active setup
+_Avoid_: Selected scenario
 
-**Active setup**:
-The setup whose presets were last loaded into the applied configuration. Later applies can make the applied configuration differ from that setup.
-_Avoid_: Draft
+**Scenario**:
+A named, described combination of the prompt selection, the model settings, the recognition and pronunciation settings, and the interaction mappings.
+_Avoid_: Setup, fair-preset, Preset, profile, snapshot
 
-**Preset**:
-A named, reusable saved piece of one kind of configuration.
-_Avoid_: Profile, template, config file
-
-**Knowledge bundle**:
-A preset that remembers which background-knowledge snippets are selected.
-_Avoid_: Folder
-
-**Setup**:
-A named selection of presets that can be activated together. Activation reads those presets as they are at that moment.
-_Avoid_: Profile, snapshot
+**Selected scenario**:
+The scenario last loaded into the draft. It remains selected when the draft no longer matches it.
+_Avoid_: Active setup, applied configuration
 
 **Apply**:
-Making one screen's draft become the applied configuration. The console labels this Übernehmen. Applying does not rewrite a preset.
+Making a draft become the applied configuration. The console labels this Übernehmen. Applying does not rewrite a scenario.
 _Avoid_: Save, activate
 
-**Save preset**:
-Storing a draft as a preset. Setups that include it read the new content the next time they are activated. The applied configuration stays as it was.
-_Avoid_: Apply, activate
+**Save scenario**:
+Storing the current draft's prompt selection, model settings, recognition and pronunciation settings, and interaction mappings as a scenario. The applied configuration stays as it was. Updating the selected scenario is labeled Aktualisieren.
+_Avoid_: Apply, übernehmen, laden
 
-**Activate**:
-Loading a setup's current presets into the applied configuration. The console labels this Setup aktivieren.
-_Avoid_: Apply, übernehmen
+**Load scenario**:
+Replacing the draft with a saved scenario and selecting that scenario. The applied configuration stays as it was.
+_Avoid_: Apply, übernehmen, save scenario
 
 **Reset**:
 Throwing away a draft and showing the applied configuration again. The console labels this Zurücksetzen.
@@ -91,3 +83,19 @@ _Avoid_: Conversation context, history, log, interim
 **Microphone bridge**:
 The process on the robot that streams its front microphone to the server.
 _Avoid_: Audio pipeline
+
+**Standby assignment**:
+The applied interaction mappings, speaker volume, speech speed, TTS language, and TTS replacements kept with the robot.
+_Avoid_: Fallback config, button texts, offline preset
+
+**Standby**:
+The robot acting on its standby assignment when a trigger is pressed. It does this while armed and while no connection is holding the triggers.
+_Avoid_: Fallback service, offline mode
+
+**Armed**:
+The operator's persistent choice that Standby respond to triggers. It is part of the interaction mappings.
+_Avoid_: Service enabled, activated
+
+**Suppressed**:
+A connection holding the triggers, so Standby does not respond.
+_Avoid_: Disconnected, paused

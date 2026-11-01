@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from uuid import uuid4
 
-from nao_fair.models import Applied, default_triggers
+from nao_fair.models import Applied, LlmDraft, default_triggers
 from nao_fair.store import Store, now_iso
 
 _DEFAULT_VOCAB = (
@@ -64,19 +64,7 @@ def seed_if_needed(store: Store, *, config_path: Path, prompts_dir: Path) -> Non
         "gladia_audio_enhancer": bool(sample["gladia_audio_enhancer"]),
         "gladia_language": str(sample["gladia_language"]),
     }
-    preset_rows = [
-        _preset("system_prompt", "Standard", {"content_id": system_id}, stamp),
-        _preset("knowledge_bundle", "Standard", {"content_ids": [knowledge_id]}, stamp),
-        _preset("local_context", "Standard", {"content_id": local_id}, stamp),
-        _preset("personality", "Standard", {"content_id": personality_id}, stamp),
-        _preset("llm", "Standard", llm_payload, stamp),
-        _preset("voice", "Standard", voice_payload, stamp),
-        _preset("stt_vocabulary", "Standard", {"terms": vocabulary}, stamp),
-        _preset("tts_replacements", "Standard", {"replacements": replacements}, stamp),
-        _preset("interaction_mappings", "Standard", {"triggers": triggers}, stamp),
-    ]
-    preset_ids = {row["kind"]: row["id"] for row in preset_rows}
-    setup_id = str(uuid4())
+    scenario_id = str(uuid4())
     applied = Applied.model_validate(
         {
             "revision": 1,
@@ -91,18 +79,18 @@ def seed_if_needed(store: Store, *, config_path: Path, prompts_dir: Path) -> Non
             "triggers": triggers,
         }
     )
+    document = {key: applied.model_dump(mode="json")[key] for key in (*LlmDraft.model_fields, "triggers")}
     store.insert_seed(
         content=content,
-        presets=preset_rows,
-        setup={
-            "id": setup_id,
+        scenario={
+            "id": scenario_id,
             "name": "Standard",
-            "description": "Seeded fair setup",
-            "preset_ids": preset_ids,
+            "description": "Seeded fair scenario",
+            "document": document,
             "updated_at": stamp,
         },
         applied=applied,
-        active_setup_id=setup_id,
+        active_setup_id=scenario_id,
     )
 
 
@@ -112,17 +100,6 @@ def _item(item_id: str, kind: str, name: str, markdown: str, stamp: str) -> dict
         "kind": kind,
         "name": name,
         "markdown": markdown,
-        "updated_at": stamp,
-    }
-
-
-def _preset(kind: str, name: str, payload: dict, stamp: str) -> dict:
-    return {
-        "id": str(uuid4()),
-        "kind": kind,
-        "name": name,
-        "description": "",
-        "payload": payload,
         "updated_at": stamp,
     }
 

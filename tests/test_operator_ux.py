@@ -19,24 +19,26 @@ def test_system_reports_local_readiness_without_revealing_secrets(tmp_path):
         assert 'private-test-secret' not in result.text
 
 
-def test_setup_preview_reports_real_deviations(tmp_path):
+def test_seeded_scenario_keeps_prompt_selection_and_leaves_volume_out(tmp_path):
     with client_for(tmp_path) as client:
-        setup=client.get('/api/setups').json()[0]
-        assert client.get(f"/api/setups/{setup['id']}/preview").json()['changes']==[]
+        applied=client.get('/api/config/applied').json()['applied']
+        scenario=client.get('/api/scenarios').json()[0]
+        assert scenario['name']=='Standard'
+        assert scenario['personality_id']==applied['personality_id']
+        assert scenario['system_prompt_id']==applied['system_prompt_id']
+        assert 'volume' not in scenario
         client.patch('/api/robot/audio',json={'volume':62})
-        preview=client.get(f"/api/setups/{setup['id']}/preview").json()
-        assert any(row['key']=='volume' for row in preview['changes'])
-        assert client.get('/api/system').json()['setup_modified'] is True
+        assert client.get(f"/api/scenarios/{scenario['id']}").json()['personality_id']==applied['personality_id']
 
 
-def test_referenced_content_requires_a_valid_replacement_and_updates_presets(tmp_path):
+def test_referenced_content_requires_a_valid_replacement_and_updates_scenarios(tmp_path):
     with client_for(tmp_path) as client:
         original=client.get('/api/content',params={'kind':'system_prompt'}).json()[0]
         replacement=client.post('/api/content',json={'kind':'system_prompt','name':'Z Ersatz','markdown':'Hallo'}).json()
         refs=client.get(f"/api/content/{original['id']}/references")
         assert refs.status_code==200
         assert refs.json()['applied'] is True
-        assert refs.json()['presets']
+        assert refs.json()['scenarios']
         assert client.delete(f"/api/content/{original['id']}").status_code==409
         # Running content stays protected, even with a replacement.
         assert client.delete(f"/api/content/{original['id']}",params={'replacement_id':replacement['id']}).status_code==409
@@ -46,17 +48,7 @@ def test_referenced_content_requires_a_valid_replacement_and_updates_presets(tmp
         draft['system_prompt_id']=replacement['id']
         assert client.post('/api/config/apply',json={'screen':'llm','draft':draft,'expected_revision':state['revision']}).status_code==200
         assert client.delete(f"/api/content/{original['id']}",params={'replacement_id':replacement['id']}).status_code==200
-        assert all(p['payload'].get('content_id')!=original['id'] for p in client.get('/api/presets').json())
-
-
-def test_referenced_preset_requires_replacement_of_matching_kind(tmp_path):
-    with client_for(tmp_path) as client:
-        original=client.get('/api/presets').json()[0]
-        same=client.post('/api/presets',json={**{k:original[k] for k in ['kind','description','payload']},'name':'Ersatz'}).json()
-        assert client.get(f"/api/presets/{original['id']}/references").json()['setups']
-        assert client.delete(f"/api/presets/{original['id']}").status_code==409
-        assert client.delete(f"/api/presets/{original['id']}",params={'replacement_id':same['id']}).status_code==200
-        assert original['id'] not in client.get('/api/setups').text
+        assert all(item['system_prompt_id']!=original['id'] for item in client.get('/api/scenarios').json())
 
 
 def test_interaction_apply_preserves_a_running_conversation(tmp_path):

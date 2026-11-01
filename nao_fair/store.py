@@ -1,4 +1,4 @@
-"""SQLite store for content, presets, setups, and the applied configuration."""
+"""SQLite store for content, scenarios, and the applied configuration."""
 
 from __future__ import annotations
 
@@ -56,10 +56,51 @@ class Store:
                 preset_ids TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scenarios (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL,
+                document TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         conn.commit()
         self._conn = conn
+        self._migrate_scenarios()
+
+    def _migrate_scenarios(self) -> None:
+        if self.meta_get("scenarios_ready") == "1":
+            return
+        setups = self.list_setups()
+        if not setups:
+            return
+        from nao_fair.scenarios import legacy_scenario_document
+
+        presets = {item["id"]: item for item in self.list_presets()}
+        applied_raw = self.meta_get("applied")
+        applied = json.loads(applied_raw) if applied_raw else None
+        with self._lock:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                if isinstance(applied, dict):
+                    for setup in setups:
+                        document = legacy_scenario_document(setup, presets, applied)
+                        if document is None:
+                            continue
+                        self.conn.execute(
+                            "INSERT OR IGNORE INTO scenarios(id, name, description, document, updated_at) "
+                            "VALUES(?, ?, ?, ?, ?)",
+                            (setup["id"], setup["name"], setup["description"], json.dumps(document), now_iso()),
+                        )
+                self.conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('scenarios_ready', '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+                )
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
 
     def close(self) -> None:
         with self._lock:
@@ -123,7 +164,7 @@ class Store:
             return None, None
         return Applied.model_validate_json(raw), active
 
-    def insert_seed(self, *, content: list[dict], presets: list[dict], setup: dict, applied: Applied, active_setup_id: str) -> None:
+    def insert_seed(self, *, content: list[dict], scenario: dict, applied: Applied, active_setup_id: str) -> None:
         with self._lock:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
@@ -139,28 +180,15 @@ class Store:
                         "VALUES(?, ?, ?, ?, ?)",
                         (item["id"], item["kind"], item["name"], item["markdown"], item["updated_at"]),
                     )
-                for preset in presets:
-                    self.conn.execute(
-                        "INSERT INTO presets(id, kind, name, description, payload, updated_at) "
-                        "VALUES(?, ?, ?, ?, ?, ?)",
-                        (
-                            preset["id"],
-                            preset["kind"],
-                            preset["name"],
-                            preset["description"],
-                            json.dumps(preset["payload"]),
-                            preset["updated_at"],
-                        ),
-                    )
                 self.conn.execute(
-                    "INSERT INTO setups(id, name, description, preset_ids, updated_at) "
+                    "INSERT INTO scenarios(id, name, description, document, updated_at) "
                     "VALUES(?, ?, ?, ?, ?)",
                     (
-                        setup["id"],
-                        setup["name"],
-                        setup["description"],
-                        json.dumps(setup["preset_ids"]),
-                        setup["updated_at"],
+                        scenario["id"],
+                        scenario["name"],
+                        scenario["description"],
+                        json.dumps(scenario["document"]),
+                        scenario["updated_at"],
                     ),
                 )
                 self.conn.execute(
@@ -170,6 +198,9 @@ class Store:
                 self.conn.execute(
                     "INSERT INTO meta(key, value) VALUES('active_setup_id', ?)",
                     (active_setup_id,),
+                )
+                self.conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('scenarios_ready', '1')"
                 )
                 self.conn.execute(
                     "INSERT INTO meta(key, value) VALUES('seed_complete', '1')"
@@ -330,6 +361,54 @@ class Store:
                 return None
         return {"id": setup_id, "name": name, "description": description, "preset_ids": preset_ids}
 
+    def list_scenarios(self) -> list[dict]:
+        from nao_fair.scenarios import public_scenario
+
+        with self._lock:
+            rows = self.conn.execute("SELECT * FROM scenarios ORDER BY name, id").fetchall()
+        return [public_scenario(_scenario(row)) for row in rows]
+
+    def get_scenario(self, scenario_id: str) -> dict | None:
+        from nao_fair.scenarios import public_scenario
+
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM scenarios WHERE id = ?", (scenario_id,)).fetchone()
+        return None if row is None else public_scenario(_scenario(row))
+
+    def create_scenario(self, name: str, description: str, document: dict) -> dict:
+        from nao_fair.scenarios import public_scenario
+
+        item_id = str(uuid4())
+        updated = now_iso()
+        row = {"id": item_id, "name": name, "description": description, "document": document, "updated_at": updated}
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO scenarios(id, name, description, document, updated_at) VALUES(?, ?, ?, ?, ?)",
+                (item_id, name, description, json.dumps(document), updated),
+            )
+            self.conn.commit()
+        return public_scenario(row)
+
+    def update_scenario(self, scenario_id: str, name: str, description: str, document: dict) -> dict | None:
+        from nao_fair.scenarios import public_scenario
+
+        updated = now_iso()
+        with self._lock:
+            cursor = self.conn.execute(
+                "UPDATE scenarios SET name = ?, description = ?, document = ?, updated_at = ? WHERE id = ?",
+                (name, description, json.dumps(document), updated, scenario_id),
+            )
+            self.conn.commit()
+            if cursor.rowcount == 0:
+                return None
+        return public_scenario({"id": scenario_id, "name": name, "description": description, "document": document, "updated_at": updated})
+
+    def delete_scenario(self, scenario_id: str) -> bool:
+        with self._lock:
+            cursor = self.conn.execute("DELETE FROM scenarios WHERE id = ?", (scenario_id,))
+            self.conn.commit()
+        return cursor.rowcount > 0
+
     def delete_setup(self, setup_id: str) -> bool:
         with self._lock:
             cursor = self.conn.execute("DELETE FROM setups WHERE id = ?", (setup_id,))
@@ -338,37 +417,29 @@ class Store:
 
 
     def remove_with_replacement(self, category: str, item_id: str, replacement_id: str | None) -> bool:
-        from nao_fair.operator_state import content_ids, CONTENT_SINGLE_KEYS, CONTENT_LIST_KEYS
-        table = 'content_items' if category == 'content' else 'presets'
+        from nao_fair.scenarios import content_ids, replace_content_id
+
+        if category != "content":
+            raise ValueError("Unbekannte Bibliothek.")
         with self._lock, self.conn:
-            original = self.conn.execute(f'SELECT * FROM {table} WHERE id = ?', (item_id,)).fetchone()
+            original = self.conn.execute("SELECT * FROM content_items WHERE id = ?", (item_id,)).fetchone()
             if original is None:
                 return False
-            replacement = self.conn.execute(f'SELECT * FROM {table} WHERE id = ?', (replacement_id,)).fetchone() if replacement_id else None
-            if replacement_id and (replacement is None or replacement_id == item_id or replacement['kind'] != original['kind']):
-                raise ValueError('Der Ersatz muss ein anderes Element derselben Art sein.')
-            if category == 'content':
-                if original['kind'] == 'system_prompt' and self.conn.execute("SELECT count(*) FROM content_items WHERE kind = 'system_prompt'").fetchone()[0] <= 1:
-                    raise ValueError('Der letzte System-Prompt kann nicht gelöscht werden.')
-                rows = self.conn.execute('SELECT id, payload FROM presets').fetchall()
-                updates = [(row['id'], json.loads(row['payload'])) for row in rows if item_id in content_ids(json.loads(row['payload']))]
-                if updates and replacement is None:
-                    raise ValueError('Der Baustein wird von Presets verwendet. Bitte einen Ersatz wählen.')
-                for preset_id, payload in updates:
-                    for key in CONTENT_SINGLE_KEYS:
-                        if payload.get(key) == item_id: payload[key] = replacement_id
-                    for key in CONTENT_LIST_KEYS:
-                        if key in payload: payload[key] = list(dict.fromkeys(replacement_id if value == item_id else value for value in payload[key]))
-                    self.conn.execute('UPDATE presets SET payload = ?, updated_at = ? WHERE id = ?', (json.dumps(payload), now_iso(), preset_id))
-            else:
-                rows = self.conn.execute('SELECT id, preset_ids FROM setups').fetchall()
-                updates = [(row['id'], json.loads(row['preset_ids'])) for row in rows if item_id in json.loads(row['preset_ids']).values()]
-                if updates and replacement is None:
-                    raise ValueError('Das Preset wird von Setups verwendet. Bitte einen Ersatz wählen.')
-                for setup_id, slots in updates:
-                    slots = {key: replacement_id if value == item_id else value for key, value in slots.items()}
-                    self.conn.execute('UPDATE setups SET preset_ids = ?, updated_at = ? WHERE id = ?', (json.dumps(slots), now_iso(), setup_id))
-            self.conn.execute(f'DELETE FROM {table} WHERE id = ?', (item_id,))
+            replacement = self.conn.execute("SELECT * FROM content_items WHERE id = ?", (replacement_id,)).fetchone() if replacement_id else None
+            if replacement_id and (replacement is None or replacement_id == item_id or replacement["kind"] != original["kind"]):
+                raise ValueError("Der Ersatz muss ein anderes Element derselben Art sein.")
+            if original["kind"] == "system_prompt" and self.conn.execute("SELECT count(*) FROM content_items WHERE kind = 'system_prompt'").fetchone()[0] <= 1:
+                raise ValueError("Der letzte System-Prompt kann nicht gelöscht werden.")
+            rows = self.conn.execute("SELECT id, document FROM scenarios").fetchall()
+            updates = [(row["id"], json.loads(row["document"])) for row in rows if item_id in content_ids(json.loads(row["document"]))]
+            if updates and replacement is None:
+                raise ValueError("Der Baustein wird von Szenarien verwendet. Bitte einen Ersatz wählen.")
+            for scenario_id, document in updates:
+                self.conn.execute(
+                    "UPDATE scenarios SET document = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(replace_content_id(document, item_id, replacement_id or "")), now_iso(), scenario_id),
+                )
+            self.conn.execute("DELETE FROM content_items WHERE id = ?", (item_id,))
         return True
 
 
@@ -398,4 +469,14 @@ def _setup(row: sqlite3.Row) -> dict[str, Any]:
         "name": row["name"],
         "description": row["description"],
         "preset_ids": json.loads(row["preset_ids"]),
+    }
+
+
+def _scenario(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row["description"],
+        "document": json.loads(row["document"]),
+        "updated_at": row["updated_at"],
     }

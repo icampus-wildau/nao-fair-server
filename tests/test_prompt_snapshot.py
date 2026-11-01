@@ -39,19 +39,25 @@ def test_content_edits_take_effect_only_after_llm_apply_and_survive_restart(tmp_
         assert "Neuer Text für Milo" in app.state.runtime.sections_for(app.state.runtime.applied, "Milo")
 
 
-def test_setup_activation_snapshots_latest_preset_content_offline(tmp_path):
+def test_scenario_keeps_the_content_id_and_apply_reads_the_latest_wording(tmp_path):
     app = create_app(db_path=tmp_path / "fair.sqlite", secrets_path=tmp_path / "secrets.json")
     with TestClient(app) as client:
+        applied = client.get("/api/config/applied").json()["applied"]
         content = client.post("/api/content", json={"kind": "personality", "name": "Messe", "markdown": "Freundlich"}).json()
-        preset = client.post("/api/presets", json={"kind": "personality", "name": "Messe", "payload": {"content_id": content["id"]}}).json()
-        setup = client.post("/api/setups", json={"name": "Messe", "preset_ids": {"personality": preset["id"]}}).json()
-        activated = client.post(f"/api/setups/{setup['id']}/activate")
-        assert activated.status_code == 200
-        assert activated.json()["active_setup_id"] == setup["id"]
+        scenario = {key: applied[key] for key in LlmDraft.model_fields}
+        scenario.update({"name": "Messe", "description": "", "personality_id": content["id"], "triggers": applied["triggers"]})
+        saved = client.post("/api/scenarios", json=scenario)
+        assert saved.status_code == 200
+        assert saved.json()["personality_id"] == content["id"]
+        draft = {key: scenario[key] for key in LlmDraft.model_fields}
+        applied_now = client.post("/api/config/apply", json={"screen": "llm", "draft": draft, "expected_revision": applied["revision"]})
+        assert applied_now.status_code == 200
         runtime = app.state.runtime
         assert "Freundlich" in runtime.sections_for(runtime.applied, "Milo")
         client.put(f"/api/content/{content['id']}", json={"name": "Messe", "markdown": "Sachlich"})
         assert "Freundlich" in runtime.sections_for(runtime.applied, "Milo")
-        assert client.post(f"/api/setups/{setup['id']}/activate").status_code == 200
+        assert saved.json()["personality_id"] == content["id"]
+        again = client.post("/api/config/apply", json={"screen": "llm", "draft": draft, "expected_revision": applied_now.json()["applied"]["revision"]})
+        assert again.status_code == 200
         assert "Sachlich" in runtime.sections_for(runtime.applied, "Milo")
         assert client.get("/api/robot/status").json()["state"] == "disconnected"

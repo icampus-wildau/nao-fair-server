@@ -20,15 +20,15 @@ def test_stop_and_clear_action_clears_transcript(tmp_path):
         assert picture["transcript"] == []
 
 
-def test_invalid_preset_and_setup_rejected_before_saving(tmp_path):
+def test_invalid_scenario_rejected_before_saving(tmp_path):
     app = create_app(db_path=tmp_path / "db", secrets_path=tmp_path / "secrets")
     with TestClient(app) as client:
-        preset = client.post("/api/presets", json={"kind": "personality", "name": "Fehler", "payload": {"content_id": "missing"}})
-        assert preset.status_code == 422
-        assert all(item["name"] != "Fehler" for item in client.get("/api/presets").json())
-        missing_terms = client.post("/api/presets", json={"kind": "stt_vocabulary", "name": "Leer", "payload": {}})
-        assert missing_terms.status_code == 422
-        available = client.get("/api/presets", params={"kind": "personality"}).json()[0]
-        setup = client.post("/api/setups", json={"name": "Fehler", "preset_ids": {"system_prompt": available["id"]}})
-        assert setup.status_code == 422
-        assert all(item["name"] != "Fehler" for item in client.get("/api/setups").json())
+        applied = client.get("/api/config/applied").json()["applied"]
+        body = {key: applied[key] for key in ("llm_model", "temperature", "max_tokens", "gladia_region", "gladia_endpointing", "gladia_max_utterance_secs", "gladia_audio_enhancer", "gladia_language", "system_prompt_id", "knowledge_ids", "local_context_id", "personality_id", "tts_replacements", "stt_vocabulary", "triggers")}
+        body.update({"name": "Fehler", "description": "", "personality_id": "missing"})
+        rejected = client.post("/api/scenarios", json=body)
+        assert rejected.status_code == 422
+        assert all(item["name"] != "Fehler" for item in client.get("/api/scenarios").json())
+        body["personality_id"] = applied["personality_id"]
+        body["name"] = ""
+        assert client.post("/api/scenarios", json=body).status_code == 422

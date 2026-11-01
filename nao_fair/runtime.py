@@ -10,16 +10,16 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from nao_fair.catalog import PRESET_KINDS, SENSOR_IDS, SETUP_SLOTS
+from nao_fair.catalog import SENSOR_IDS
 from nao_fair.compose import enabled_replacements, prompt_sections
 from nao_fair.events import EventHub
 from nao_fair.models import (
-    ROBOT_FIELDS,
     Applied,
     Connection,
     InteractionsDraft,
     LlmDraft,
     RobotDraft,
+    ScenarioWrite,
     TriggerBinding,
 )
 from nao_fair.secrets import SecretStore
@@ -494,44 +494,6 @@ class Runtime:
             await self.stop_browser_test("Konfiguration übernommen. Den Mikrofontest erneut starten.")
         return view
 
-    async def activate(self, setup_id: str) -> dict:
-        setup = self.store.get_setup(setup_id)
-        if setup is None:
-            raise ApiError(404, "setup not found")
-        try:
-            candidate = self._merge_setup(setup)
-            self._validate_references(candidate)
-            snapshot = prompt_sections(self.store, candidate, "{robot_name}")
-            content = self._content_snapshot(candidate)
-        except ValidationError as exc:
-            raise ApiError(422, _validation_message(exc)) from exc
-        except ValueError as exc:
-            raise ApiError(422, str(exc)) from exc
-        link = None
-        with self.lock:
-            candidate.revision = self.applied.revision + 1
-            previous = self.conversation_state
-            self.applied = candidate
-            self.active_setup_id = setup_id
-            self.conversation_state = "idle"
-            self.prompt_snapshot = snapshot
-            self.applied_content = content
-            self.store.save_runtime(candidate, setup_id, snapshot, content)
-            self._arm_timer_locked()
-            if previous != "idle":
-                self.hub.emit("conversation.state_changed", state="idle")
-            self.hub.emit(
-                "config.applied",
-                applied=candidate.model_dump(mode="json"),
-                active_setup_id=setup_id,
-            )
-            link = self._link
-            view = self.applied_view_locked()
-        if link is not None:
-            await link.on_applied(candidate, "setup")
-        await self.stop_browser_test("Setup aktiviert. Den Mikrofontest erneut starten.")
-        return view
-
     async def stop_browser_test(self, reason: str) -> None:
         with self.lock:
             test = self.browser_test
@@ -561,40 +523,19 @@ class Runtime:
             raise ValueError("unknown screen")
         return Applied.model_validate(data)
 
-    def _merge_setup(self, setup: dict) -> Applied:
-        data = self.applied.model_dump()
-        preset_ids = setup["preset_ids"]
-        if not isinstance(preset_ids, dict):
-            raise ValueError("preset_ids must be an object")
-        unknown = set(preset_ids) - set(SETUP_SLOTS)
-        if unknown:
-            raise ValueError("unknown setup slot")
-        for slot, preset_id in preset_ids.items():
-            preset = self.store.get_preset(str(preset_id))
-            if preset is None:
-                raise ValueError(f"preset not found: {preset_id}")
-            if preset["kind"] != slot:
-                raise ValueError(f"preset kind does not match slot {slot}")
-            _apply_preset(data, slot, preset["payload"])
-        return Applied.model_validate(data)
+    def validate_scenario(self, body: ScenarioWrite) -> dict:
+        from nao_fair.scenarios import combination
 
-    def validate_preset(self, kind: str, payload: dict) -> None:
         try:
+            document = combination(body.model_dump())
             data = self.applied.model_dump()
-            _apply_preset(data, kind, payload)
+            data.update(document)
             self._validate_references(Applied.model_validate(data))
         except ValidationError as exc:
             raise ApiError(422, _validation_message(exc)) from exc
-        except ValueError as exc:
+        except (ValueError, KeyError) as exc:
             raise ApiError(422, str(exc)) from exc
-
-    def validate_setup(self, preset_ids: dict[str, str]) -> None:
-        try:
-            self._validate_references(self._merge_setup({"preset_ids": preset_ids}))
-        except ValidationError as exc:
-            raise ApiError(422, _validation_message(exc)) from exc
-        except ValueError as exc:
-            raise ApiError(422, str(exc)) from exc
+        return document
 
     def _validate_references(self, applied: Applied) -> None:
         self._require_content(applied.system_prompt_id, "system_prompt")
@@ -812,61 +753,3 @@ class Runtime:
 class _Aborted(Exception):
     pass
 
-
-_LLM_PRESET_FIELDS = (
-    "llm_model",
-    "temperature",
-    "max_tokens",
-    "gladia_region",
-    "gladia_endpointing",
-    "gladia_max_utterance_secs",
-    "gladia_audio_enhancer",
-    "gladia_language",
-)
-
-
-def _apply_preset(data: dict, slot: str, payload: dict) -> None:
-    if not isinstance(payload, dict):
-        raise ValueError(f"{slot} payload must be an object")
-    if slot == "system_prompt":
-        data["system_prompt_id"] = _required_str(payload, "content_id")
-    elif slot == "knowledge_bundle":
-        ids = payload.get("content_ids")
-        if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
-            raise ValueError("knowledge bundle content_ids must be a list of strings")
-        data["knowledge_ids"] = list(ids)
-    elif slot == "local_context":
-        data["local_context_id"] = _required_str(payload, "content_id")
-    elif slot == "personality":
-        data["personality_id"] = _required_str(payload, "content_id")
-    elif slot == "llm":
-        for field in _LLM_PRESET_FIELDS:
-            if field not in payload:
-                raise ValueError(f"llm preset missing {field}")
-            data[field] = payload[field]
-    elif slot == "voice":
-        for field in ROBOT_FIELDS:
-            if field not in payload:
-                raise ValueError(f"voice preset missing {field}")
-            data[field] = payload[field]
-    elif slot == "stt_vocabulary":
-        if "terms" not in payload:
-            raise ValueError("stt vocabulary preset missing terms")
-        data["stt_vocabulary"] = payload["terms"]
-    elif slot == "tts_replacements":
-        if "replacements" not in payload:
-            raise ValueError("tts replacements preset missing replacements")
-        data["tts_replacements"] = payload["replacements"]
-    elif slot == "interaction_mappings":
-        if "triggers" not in payload:
-            raise ValueError("interaction mappings preset missing triggers")
-        data["triggers"] = payload["triggers"]
-    elif slot not in PRESET_KINDS:
-        raise ValueError(f"unknown preset slot {slot}")
-
-
-def _required_str(payload: dict, key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"missing {key}")
-    return value

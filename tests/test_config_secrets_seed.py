@@ -94,12 +94,6 @@ def test_apply_and_activate_without_a_robot(tmp_path) -> None:
         assert [line["text"] for line in picture["transcript"]] == ["bleibt stehen"]
         assert picture["connection"]["state"] == "connected"
         assert picture["applied"]["volume"] == 41
-
-        setup_id = client.get("/api/setups").json()[0]["id"]
-        activated = client.post(f"/api/setups/{setup_id}/activate")
-        assert activated.status_code == 200
-        assert activated.json()["applied"]["volume"] == 50
-        assert activated.json()["active_setup_id"] == setup_id
         assert client.get("/api/robot/status").json()["state"] == "connected"
 
 
@@ -141,34 +135,27 @@ def test_secrets_never_echo_and_blank_put_does_not_clear(tmp_path, monkeypatch) 
         assert secret not in removed.text
 
 
-def test_seed_runs_once_and_a_preset_survives_restart(tmp_path) -> None:
+def test_seed_runs_once_and_a_scenario_survives_restart(tmp_path) -> None:
     db_path, secrets_path = _paths(tmp_path)
     app = create_app(db_path=db_path, secrets_path=secrets_path)
     with TestClient(app) as client:
-        setups = client.get("/api/setups").json()
-        assert len(setups) == 1
-        assert setups[0]["name"] == "Standard"
-        content_id = client.get("/api/content", params={"kind": "personality"}).json()[0]["id"]
-        created = client.post(
-            "/api/presets",
-            json={
-                "kind": "personality",
-                "name": "Warm",
-                "description": "kept",
-                "payload": {"content_id": content_id},
-            },
-        )
+        scenarios = client.get("/api/scenarios").json()
+        assert len(scenarios) == 1
+        assert scenarios[0]["name"] == "Standard"
+        body = {key: value for key, value in scenarios[0].items() if key != "id"}
+        body.update({"name": "Warm", "description": "kept"})
+        created = client.post("/api/scenarios", json=body)
         assert created.status_code == 200
-        preset_id = created.json()["id"]
+        scenario_id = created.json()["id"]
 
     restarted = create_app(db_path=db_path, secrets_path=secrets_path)
     with TestClient(restarted) as client:
-        setups = client.get("/api/setups").json()
-        assert len(setups) == 1
-        assert setups[0]["name"] == "Standard"
-        loaded = client.get(f"/api/presets/{preset_id}")
+        scenarios = client.get("/api/scenarios").json()
+        assert len(scenarios) == 2
+        assert any(item["name"] == "Standard" for item in scenarios)
+        loaded = client.get(f"/api/scenarios/{scenario_id}")
         assert loaded.status_code == 200
         assert loaded.json()["name"] == "Warm"
-        assert loaded.json()["payload"] == {"content_id": content_id}
+        assert loaded.json()["description"] == "kept"
         prompts = client.get("/api/content", params={"kind": "system_prompt"}).json()
         assert len(prompts) == 1

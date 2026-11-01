@@ -9,7 +9,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSo
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 
-from nao_fair.catalog import PRESET_KINDS, SETUP_SLOTS, capabilities
+from nao_fair.catalog import capabilities
 from nao_fair.runtime import ApiError, Runtime, _validation_message
 from nao_fair.secrets import SLOTS, SecretStore
 from nao_fair.seed import seed_if_needed
@@ -24,10 +24,8 @@ from nao_fair.models import (
     ContentUpdate,
     ContentWrite,
     MotionRequest,
-    PresetUpdate,
-    PresetWrite,
+    ScenarioWrite,
     SecretWrite,
-    SetupWrite,
     SpeakRequest,
 )
 
@@ -289,105 +287,46 @@ def _delete_library(request: Request, category: str, item_id: str, replacement_i
     return {'deleted': item_id}
 
 
-@router.get("/presets")
-def list_presets(request: Request, kind: str | None = None) -> list:
-    return _runtime(request).store.list_presets(kind)
+@router.get("/scenarios")
+def list_scenarios(request: Request) -> list:
+    return _runtime(request).store.list_scenarios()
 
 
-@router.post("/presets")
-async def create_preset(request: Request) -> dict:
-    body = await _body(request, PresetWrite)
-    if body.kind not in PRESET_KINDS:
-        raise ApiError(422, "unknown preset kind")
-    _runtime(request).validate_preset(body.kind, body.payload)
-    return _runtime(request).store.create_preset(
-        body.kind, body.name, body.description, body.payload
-    )
+@router.post("/scenarios")
+async def create_scenario(request: Request) -> dict:
+    body = await _body(request, ScenarioWrite)
+    document = _runtime(request).validate_scenario(body)
+    return _runtime(request).store.create_scenario(body.name.strip(), body.description.strip(), document)
 
 
-@router.get("/presets/{preset_id}")
-def get_preset(preset_id: str, request: Request) -> dict:
-    item = _runtime(request).store.get_preset(preset_id)
+@router.get("/scenarios/{scenario_id}")
+def get_scenario(scenario_id: str, request: Request) -> dict:
+    item = _runtime(request).store.get_scenario(scenario_id)
     if item is None:
-        raise ApiError(404, "preset not found")
+        raise ApiError(404, "scenario not found")
     return item
 
 
-@router.put("/presets/{preset_id}")
-async def update_preset(preset_id: str, request: Request) -> dict:
-    body = await _body(request, PresetUpdate)
-    existing = _runtime(request).store.get_preset(preset_id)
-    if existing is None:
-        raise ApiError(404, "preset not found")
-    _runtime(request).validate_preset(existing["kind"], body.payload)
-    item = _runtime(request).store.update_preset(
-        preset_id, body.name, body.description, body.payload
-    )
+@router.put("/scenarios/{scenario_id}")
+async def update_scenario(scenario_id: str, request: Request) -> dict:
+    body = await _body(request, ScenarioWrite)
+    if _runtime(request).store.get_scenario(scenario_id) is None:
+        raise ApiError(404, "scenario not found")
+    document = _runtime(request).validate_scenario(body)
+    item = _runtime(request).store.update_scenario(scenario_id, body.name.strip(), body.description.strip(), document)
     if item is None:
-        raise ApiError(404, "preset not found")
+        raise ApiError(404, "scenario not found")
     return item
 
 
-@router.get("/presets/{preset_id}/references")
-def preset_references(preset_id: str, request: Request) -> dict:
-    from nao_fair.operator_state import references
-    return references(_runtime(request), 'preset', preset_id)
-
-
-@router.delete("/presets/{preset_id}")
-def delete_preset(preset_id: str, request: Request, replacement_id: str | None = None) -> dict:
-    return _delete_library(request, 'preset', preset_id, replacement_id)
-
-
-@router.get("/setups")
-def list_setups(request: Request) -> list:
-    return _runtime(request).store.list_setups()
-
-
-@router.post("/setups")
-async def create_setup(request: Request) -> dict:
-    body = await _body(request, SetupWrite)
-    _check_slots(body.preset_ids)
-    _runtime(request).validate_setup(body.preset_ids)
-    return _runtime(request).store.create_setup(body.name, body.description, body.preset_ids)
-
-
-@router.get("/setups/{setup_id}")
-def get_setup(setup_id: str, request: Request) -> dict:
-    item = _runtime(request).store.get_setup(setup_id)
-    if item is None:
-        raise ApiError(404, "setup not found")
-    return item
-
-
-@router.put("/setups/{setup_id}")
-async def update_setup(setup_id: str, request: Request) -> dict:
-    body = await _body(request, SetupWrite)
-    _check_slots(body.preset_ids)
-    if _runtime(request).store.get_setup(setup_id) is None:
-        raise ApiError(404, "setup not found")
-    _runtime(request).validate_setup(body.preset_ids)
-    item = _runtime(request).store.update_setup(
-        setup_id, body.name, body.description, body.preset_ids
-    )
-    if item is None:
-        raise ApiError(404, "setup not found")
-    return item
-
-
-@router.delete("/setups/{setup_id}")
-async def delete_setup(setup_id: str, request: Request) -> JSONResponse:
+@router.delete("/scenarios/{scenario_id}")
+async def delete_scenario(scenario_id: str, request: Request) -> JSONResponse:
     body = await _body(request, ConfirmDelete)
     if not body.confirm:
         raise ApiError(400, "confirmation required")
-    if not _runtime(request).store.delete_setup(setup_id):
-        raise ApiError(404, "setup not found")
-    return JSONResponse({"deleted": setup_id})
-
-
-@router.post("/setups/{setup_id}/activate")
-async def activate_setup(setup_id: str, request: Request) -> dict:
-    return await _runtime(request).activate(setup_id)
+    if not _runtime(request).store.delete_scenario(scenario_id):
+        raise ApiError(404, "scenario not found")
+    return JSONResponse({"deleted": scenario_id})
 
 
 @router.get("/secrets")
@@ -415,19 +354,7 @@ def delete_secret(slot: str, request: Request) -> dict:
     return {"slot": slot, "status": status}
 
 
-def _check_slots(preset_ids: dict[str, str]) -> None:
-    unknown = set(preset_ids) - set(SETUP_SLOTS)
-    if unknown:
-        raise ApiError(422, "unknown setup slot")
-
-
 @router.get('/system')
 async def system_status(request: Request, probe: bool = False) -> dict:
     from nao_fair.operator_state import system_report
     return await system_report(_runtime(request), probe)
-
-
-@router.get('/setups/{setup_id}/preview')
-def preview_setup(setup_id: str, request: Request) -> dict:
-    from nao_fair.operator_state import setup_preview
-    return setup_preview(_runtime(request), setup_id)
