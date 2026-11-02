@@ -8,16 +8,20 @@ from pydantic import ValidationError
 
 from nao_fair.models import InteractionsDraft, LlmDraft
 
-SCENARIO_FIELDS = tuple(LlmDraft.model_fields) + ("triggers",)
+SCENARIO_FIELDS = tuple(LlmDraft.model_fields) + ("triggers", "autostart_enabled")
 
 
 def combination(payload: dict) -> dict:
     """The stored part of a scenario, checked as a language draft plus triggers."""
     llm = LlmDraft.model_validate({key: payload[key] for key in LlmDraft.model_fields})
-    interactions = InteractionsDraft.model_validate({"triggers": payload["triggers"]})
+    interaction_payload = {"triggers": payload["triggers"]}
+    if "autostart_enabled" in payload:
+        interaction_payload["autostart_enabled"] = payload["autostart_enabled"]
+    interactions = InteractionsDraft.model_validate(interaction_payload)
     return {
         **llm.model_dump(mode="json"),
         "triggers": {key: value.model_dump(mode="json") for key, value in interactions.triggers.items()},
+        "autostart_enabled": interactions.autostart_enabled,
     }
 
 
@@ -99,6 +103,8 @@ def _apply_preset(data: dict, slot: str, payload: dict) -> None:
         if "triggers" not in payload:
             raise ValueError("interaction mappings preset missing triggers")
         data["triggers"] = payload["triggers"]
+        if "autostart_enabled" in payload:
+            data["autostart_enabled"] = payload["autostart_enabled"]
     elif slot != "voice":
         raise ValueError(f"unknown preset slot {slot}")
 

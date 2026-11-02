@@ -141,6 +141,7 @@ class Applied(ApiModel):
     tts_replacements: list[Replacement]
     stt_vocabulary: list[VocabularyTerm]
     triggers: dict[str, TriggerBinding]
+    autostart_enabled: bool = True
 
     @model_validator(mode="after")
     def check_ranges(self) -> Applied:
@@ -222,6 +223,7 @@ class LlmDraft(ApiModel):
 
 class InteractionsDraft(ApiModel):
     triggers: dict[str, TriggerBinding]
+    autostart_enabled: bool = True
 
 
 class ApplyRequest(ApiModel):
@@ -284,6 +286,7 @@ class ScenarioWrite(LlmDraft):
     name: str = Field(min_length=1)
     description: str = ""
     triggers: dict[str, TriggerBinding]
+    autostart_enabled: bool = True
 
 
 ROBOT_FIELDS = tuple(RobotDraft.model_fields)

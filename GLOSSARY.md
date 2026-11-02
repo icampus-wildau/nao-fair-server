@@ -1,27 +1,31 @@
 # NAO Fair
 
-The staff console for running one NAO robot at a university fair, and the words for the configuration it edits.
+The NAO Fair app for running one NAO robot at a university fair, and the words for the configuration it edits.
 
 ## Language
 
+**NAO Fair app**:
+The staff application that configures and runs the one robot at a fair.
+_Avoid_: Konsole, console, Messekonsole
+
 **Operator**:
-A staff member who configures and runs the robot. Visitors do not use the console.
+A staff member who configures and runs the robot. Visitors do not use the NAO Fair app.
 _Avoid_: User, admin, visitor
 
 **Robot**:
-The one NAO the console is connected to.
+The one NAO the NAO Fair app is connected to.
 _Avoid_: Fleet, device
 
 **Connection**:
-Whether a robot is attached right now. While disconnected the console still edits prompts and settings, the robot's name is unknown, and a failure can remain until the next connect attempt.
+Whether a robot is attached right now. While disconnected the NAO Fair app still edits prompts and settings, the robot's name is unknown, and a failure can remain until the next connect attempt.
 _Avoid_: Simulator, demo mode, session
 
 **Robot address**:
-The IP address the console is aimed at. The running server decides which address it last used, and after a server restart the browser's remembered address is used.
+The IP address the NAO Fair app is aimed at. The running server decides which address it last used, and after a server restart the browser's remembered address is used.
 _Avoid_: Robot name
 
 **Operator secret**:
-A cloud API secret the operator submitted through the console. It stays on the server and is never sent back to the browser.
+A cloud API secret the operator submitted through the NAO Fair app. It stays on the server and is never sent back to the browser.
 _Avoid_: Key in the page, token
 
 **Environment secret**:
@@ -45,7 +49,7 @@ The scenario last loaded into the draft. It remains selected when the draft no l
 _Avoid_: Active setup, applied configuration
 
 **Apply**:
-Making a draft become the applied configuration. The console labels this Übernehmen. Applying does not rewrite a scenario.
+Making a draft become the applied configuration. The NAO Fair app labels this Übernehmen. Applying does not rewrite a scenario.
 _Avoid_: Save, activate
 
 **Save scenario**:
@@ -57,7 +61,7 @@ Replacing the draft with a saved scenario and selecting that scenario. The appli
 _Avoid_: Apply, übernehmen, save scenario
 
 **Reset**:
-Throwing away a draft and showing the applied configuration again. The console labels this Zurücksetzen.
+Throwing away a draft and showing the applied configuration again. The NAO Fair app labels this Zurücksetzen.
 _Avoid_: Factory reset, disconnect
 
 **Trigger**:
@@ -82,20 +86,24 @@ _Avoid_: Conversation context, history, log, interim
 
 **Microphone bridge**:
 The process on the robot that streams its front microphone to the server.
-_Avoid_: Audio pipeline
+_Avoid_: Audio pipeline, service
+
+**Autostart process**:
+The process on the robot that performs Standby. The interactions screen does not use this name.
+_Avoid_: Service, NAOqi service, Autostart
 
 **Standby assignment**:
 The applied interaction mappings, speaker volume, speech speed, TTS language, and TTS replacements kept with the robot.
 _Avoid_: Fallback config, button texts, offline preset
 
 **Standby**:
-The robot acting on its standby assignment when a trigger is pressed. It does this while armed and while no connection is holding the triggers.
+The robot acting on its standby assignment when a trigger is pressed. It does this while armed and while the NAO Fair app is not holding the triggers. The interactions screen calls this Autostart.
 _Avoid_: Fallback service, offline mode
 
 **Armed**:
-The operator's persistent choice that Standby respond to triggers. It is part of the interaction mappings.
+The operator's persistent choice that Standby respond to triggers. It is part of the interaction mappings, the interactions screen labels it Aktiviert im Autostart, and it is on unless an operator turns it off.
 _Avoid_: Service enabled, activated
 
 **Suppressed**:
-A connection holding the triggers, so Standby does not respond.
+A connection from the NAO Fair app holding the triggers, so Standby does not respond.
 _Avoid_: Disconnected, paused

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -59,6 +60,9 @@ def create_app(
         nao_ports=nao_ports if nao_ports is not None else list(settings.nao_ports),
         bridge_token=settings.bridge_token if bridge_token is None else bridge_token,
     )
+    database = db_path or settings.db_path
+    from nao_fair.programs import ProgramService
+    programs = ProgramService(runtime, Path(database).parent / "known_hosts")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -70,6 +74,7 @@ def create_app(
 
     app = FastAPI(title="NAO Fair", lifespan=lifespan)
     app.state.runtime = runtime
+    app.state.programs = programs
     app.include_router(router)
     frontend_dir = settings.frontend_dir.resolve()
     frontend_index = (frontend_dir / "index.html").resolve()
@@ -358,3 +363,31 @@ def delete_secret(slot: str, request: Request) -> dict:
 async def system_status(request: Request, probe: bool = False) -> dict:
     from nao_fair.operator_state import system_report
     return await system_report(_runtime(request), probe)
+
+
+@router.get("/programs")
+async def programs(request: Request) -> dict:
+    return await request.app.state.programs.snapshot()
+
+
+@router.post("/programs/{program_id}/install")
+async def install_program(program_id: str, request: Request) -> dict:
+    from nao_fair.programs import InstallRequest
+    body = await _body(request, InstallRequest)
+    if not body.confirm:
+        raise ApiError(400, "Die Installation muss bestätigt werden.")
+    return await request.app.state.programs.begin(program_id, body.password)
+
+
+@router.post("/programs/install/hostkey")
+async def program_hostkey(request: Request) -> dict:
+    from nao_fair.programs import HostKeyRequest
+    body = await _body(request, HostKeyRequest)
+    return request.app.state.programs.decide_hostkey(body.accept)
+
+
+@router.post("/programs/install/password")
+async def program_password(request: Request) -> dict:
+    from nao_fair.programs import PasswordRequest
+    body = await _body(request, PasswordRequest)
+    return request.app.state.programs.retry_password(body.password)

@@ -79,7 +79,10 @@ def seed_if_needed(store: Store, *, config_path: Path, prompts_dir: Path) -> Non
             "triggers": triggers,
         }
     )
-    document = {key: applied.model_dump(mode="json")[key] for key in (*LlmDraft.model_fields, "triggers")}
+    document = {
+        key: applied.model_dump(mode="json")[key]
+        for key in (*LlmDraft.model_fields, "triggers", "autostart_enabled")
+    }
     store.insert_seed(
         content=content,
         scenario={

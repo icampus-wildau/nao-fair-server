@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from nao_fair.catalog import BINDING_MOTIONS
@@ -51,6 +52,11 @@ class LiveLink:
         self._closing = False
         self._task: asyncio.Task | None = None
         self._health: asyncio.Task | None = None
+        self._lease_task: asyncio.Task | None = None
+        self._lease_seq = 0
+        self._assignment_seq = 0
+        self.last_autostart_ack = None
+        self.autostart_synced = False
 
     @classmethod
     async def open(
@@ -87,6 +93,7 @@ class LiveLink:
 
         link = cls(runtime, nao, nao.robot_name or "NAO")
         try:
+            await link.begin_autostart(applied)
             await link._prepare(applied)
             link._bind_buttons()
             link._start_pipeline(applied, secrets, bridge_port, bridge_token, address)
@@ -120,9 +127,85 @@ class LiveLink:
         except Exception:
             logger.exception("Could not cancel gesture")
         try:
+            await self.release_autostart()
+        except Exception:
+            logger.exception("Could not release autostart")
+        try:
             await nao.close()
         except Exception:
             logger.exception("Could not close NAOqi")
+
+    async def begin_autostart(self, applied: Applied) -> None:
+        """Store the assignment, take the lease, then quiet the robot."""
+        try:
+            self.autostart_synced = await self.sync_autostart(applied)
+        except Exception:
+            logger.exception("Could not push autostart")
+            self.autostart_synced = False
+        await self.hold_autostart()
+        if self.nao is None:
+            return
+        try:
+            await self.nao.tts.stop_async()
+        except Exception:
+            logger.exception("Could not stop speech before the session")
+        try:
+            await self.nao.motion.cancel()
+        except Exception:
+            logger.exception("Could not cancel a gesture before the session")
+
+    async def sync_autostart(self, applied: Applied) -> bool:
+        from nao_fair.robot.autostart import assignment_document, push_assignment
+
+        self._assignment_seq += 1
+        return await push_assignment(self.nao, assignment_document(applied), self._assignment_seq)
+
+    async def hold_autostart(self) -> None:
+        if self._lease_task is not None:
+            return
+        self._lease_seq += 1
+        from nao_fair.robot.autostart import wait_lease_ack, write_lease
+
+        await write_lease(self.nao, "hold", self._lease_seq)
+        if self.autostart_synced:
+            if not await wait_lease_ack(self.nao, self._lease_seq, timeout=10.0):
+                raise RuntimeError("Der Autostart-Prozess hat die Steuerung nicht freigegeben.")
+            self.last_autostart_ack = time.monotonic()
+        self._lease_task = asyncio.create_task(self._renew_autostart(), name="autostart-lease")
+
+    async def release_autostart(self) -> None:
+        task = self._lease_task
+        self._lease_task = None
+        if task is not None:
+            task.cancel()
+            await _quiet(task)
+        if self.nao is None:
+            return
+        from nao_fair.robot.autostart import write_lease
+
+        self._lease_seq += 1
+        await write_lease(self.nao, "release", self._lease_seq)
+
+    async def _renew_autostart(self) -> None:
+        from nao_fair.robot.autostart import LEASE_PERIOD_SECS, wait_lease_ack, write_lease
+
+        try:
+            while not self._closing:
+                await asyncio.sleep(LEASE_PERIOD_SECS)
+                if self._closing or self.nao is None:
+                    return
+                self._lease_seq += 1
+                try:
+                    await write_lease(self.nao, "hold", self._lease_seq)
+                    if await wait_lease_ack(self.nao, self._lease_seq):
+                        self.last_autostart_ack = time.monotonic()
+                        if not self.autostart_synced and self.runtime is not None:
+                            await self.runtime._push_autostart(self, notice=False)
+                            self.autostart_synced = bool(self.runtime._autostart_synced)
+                except Exception:
+                    logger.exception("Could not renew the autostart lease; retrying")
+        except asyncio.CancelledError:
+            return
 
     async def on_applied(self, applied: Applied, screen: str) -> None:
         del screen

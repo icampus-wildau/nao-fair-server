@@ -12,10 +12,12 @@ NUM_CHANNELS = CHANNELS
 
 
 class NaoAudioBridgeSerializer(FrameSerializer):
-    def __init__(self):
+    def __init__(self, on_status=None):
         super().__init__()
         self._format_received = False
         self._bridge_dropped_chunks: int | None = None
+        self.bridge_version: str | None = None
+        self._on_status = on_status
 
     async def serialize(self, frame: Frame) -> str | bytes | None:
         # This WebSocket connection is input-only.
@@ -63,6 +65,11 @@ class NaoAudioBridgeSerializer(FrameSerializer):
             return
         previous = self._bridge_dropped_chunks
         self._bridge_dropped_chunks = dropped
+        version = message.get("version")
+        if isinstance(version, str) and version.strip():
+            self.bridge_version = version.strip()
+        if self._on_status is not None:
+            self._on_status(message)
         if previous is not None and dropped > previous:
             logger.warning(
                 "NAO audio bridge dropped chunks: "

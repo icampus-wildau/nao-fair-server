@@ -63,35 +63,37 @@ def test_event_stream_picture_then_live_reports(tmp_path) -> None:
             driver.append_transcript("nao", "Hallo")
             driver.press("front_head")
 
-            events = [ws.receive_json() for _ in range(6)]
+            events = [ws.receive_json() for _ in range(7)]
 
         types = [picture["type"], *[event["type"] for event in events]]
         assert types == [
             "picture",
             "connection.changed",
             "connection.changed",
+            "autostart.changed",
             "conversation.state_changed",
             "transcript.message",
             "transcript.message",
             "sensor.pressed",
         ]
         sequences = [picture["sequence"], *[event["sequence"] for event in events]]
-        assert sequences == list(range(1, 8))
+        assert sequences == list(range(1, 9))
         assert events[0]["connection"]["state"] == "disconnected"
         assert events[0]["connection"]["address"] == "192.0.2.10"
         assert events[0]["connection"]["failure"] is None
         assert events[1]["connection"]["state"] == "connected"
         assert events[1]["connection"]["name"] == "Milo"
-        assert events[2] == {
+        assert events[2] == {"type": "autostart.changed", "sequence": 4, "synced": True}
+        assert events[3] == {
             "type": "conversation.state_changed",
-            "sequence": 4,
+            "sequence": 5,
             "state": "listening",
         }
-        assert events[3]["speaker"] == "visitor"
-        assert events[3]["text"] == "Guten Tag"
-        assert events[4]["speaker"] == "nao"
-        assert events[4]["text"] == "Hallo"
-        assert events[5]["sensor_id"] == "front_head"
+        assert events[4]["speaker"] == "visitor"
+        assert events[4]["text"] == "Guten Tag"
+        assert events[5]["speaker"] == "nao"
+        assert events[5]["text"] == "Hallo"
+        assert events[6]["sensor_id"] == "front_head"
         assert "action.completed" not in types
 
         status = client.get("/api/robot/status").json()
@@ -128,6 +130,7 @@ def test_disconnect_emits_transcript_replaced(tmp_path) -> None:
             assert response.status_code == 200
             ws.receive_json()
             ws.receive_json()
+            assert ws.receive_json()["type"] == "autostart.changed"
             driver.set_conversation_state("speaking")
             ws.receive_json()
             driver.append_transcript("visitor", "Frage")
@@ -137,10 +140,10 @@ def test_disconnect_emits_transcript_replaced(tmp_path) -> None:
             state = ws.receive_json()
             connection = ws.receive_json()
 
-        assert replaced == {"type": "transcript.replaced", "sequence": 6, "lines": []}
-        assert state == {"type": "conversation.state_changed", "sequence": 7, "state": "idle"}
+        assert replaced == {"type": "transcript.replaced", "sequence": 7, "lines": []}
+        assert state == {"type": "conversation.state_changed", "sequence": 8, "state": "idle"}
         assert connection["type"] == "connection.changed"
-        assert connection["sequence"] == 8
+        assert connection["sequence"] == 9
         assert connection["connection"]["state"] == "disconnected"
 
 
@@ -159,6 +162,7 @@ def test_stop_and_clear_emits_transcript_replaced(tmp_path) -> None:
             assert response.status_code == 200
             ws.receive_json()
             ws.receive_json()
+            assert ws.receive_json()["type"] == "autostart.changed"
             driver.append_transcript("visitor", "bleibt kurz")
             ws.receive_json()
             future = asyncio.run_coroutine_threadsafe(
@@ -168,4 +172,4 @@ def test_stop_and_clear_emits_transcript_replaced(tmp_path) -> None:
             future.result(timeout=5)
             replaced = ws.receive_json()
 
-        assert replaced == {"type": "transcript.replaced", "sequence": 5, "lines": []}
+        assert replaced == {"type": "transcript.replaced", "sequence": 6, "lines": []}

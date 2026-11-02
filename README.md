@@ -18,7 +18,7 @@ uv sync --locked --extra dev --extra robot --extra browser
 
 `uv sync` removes extras not selected in the current command. When adding an extra later, include every extra you still need. The robot libraries come from PyPI, so their source checkouts are not required. See [INSTALL.md](INSTALL.md) for the complete frontend and platform setup.
 
-OpenAI and Gladia keys are set in the console under **System → Schlüssel**, or with `OPENAI_API_KEY` and `GLADIA_API_KEY`. The console never receives the stored value. `NAO_BRIDGE_TOKEN` is the microphone-bridge path token.
+OpenAI and Gladia keys are set in the NAO Fair app under **System → Schlüssel**, or with `OPENAI_API_KEY` and `GLADIA_API_KEY`. The NAO Fair app never receives the stored value. `NAO_BRIDGE_TOKEN` is the microphone-bridge path token.
 
 ## Start
 
@@ -30,7 +30,7 @@ The API is at [http://127.0.0.1:8000](http://127.0.0.1:8000). Stop with Ctrl+C. 
 
 The process starts with no robot connected. Prompts, presets, setups, and settings can be edited and applied before a connection. A successful connection sends the applied configuration.
 
-To serve the operator console from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `pnpm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173).
+To serve the NAO Fair app from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `pnpm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173).
 
 ## Test the conversation without a NAO
 

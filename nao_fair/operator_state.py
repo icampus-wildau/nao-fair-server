@@ -32,6 +32,7 @@ async def system_report(runtime: Runtime, probe: bool = False) -> dict:
         client = getattr(transport, '_session', None)
         stream_connected = bool(getattr(client, 'is_connected', False))
         bridge_state = 'ready' if stream_connected else 'waiting'
+    reachable = None
     if probe and connection['address'] and runtime.driver is None:
         from nao_fair.robot.probe import tcp_accepts, bridge_accepts
         ports = await asyncio.gather(*(tcp_accepts(connection['address'], port) for port in runtime.nao_ports))
@@ -40,9 +41,11 @@ async def system_report(runtime: Runtime, probe: bool = False) -> dict:
         bridge_state = ('ready' if await bridge_accepts(connection['address'], runtime.bridge_port) else 'missing') if reachable else 'blocked'
     if connected and stream_connected is False and bridge_state == 'ready':
         bridge_state = 'waiting'
+    from nao_fair.programs import autostart_check
     checks = {
         'nao': {'state': nao_state, 'detail': connection.get('failure') or connection.get('address') or 'Keine Adresse verbunden.', 'action': 'address'},
         'bridge': {'state': bridge_state, 'detail': f'Mikrofonbrücke · Port {runtime.bridge_port}' + (' · Audio-Stream wird verbunden.' if bridge_state == 'waiting' else ''), 'action': 'bridge'},
+        'autostart': await autostart_check(runtime, connected=connected, reachable=reachable),
     }
     for slot in ('openai', 'gladia'):
         present = runtime.secrets.status(slot) != 'missing'

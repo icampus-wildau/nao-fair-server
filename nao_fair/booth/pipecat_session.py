@@ -165,6 +165,7 @@ class PipecatSession:
         self._audio_connected_at: float | None = None
         self._llm_model = self._config.llm_model
         self._nao_bridge_url = None
+        self.bridge_version: str | None = None
         self._SAMPLE_RATE = 16000
         self._NUM_CHANNELS = 1
         if nao_controller is not None:
@@ -176,6 +177,11 @@ class PipecatSession:
             )
             self._SAMPLE_RATE = SAMPLE_RATE
             self._NUM_CHANNELS = CHANNELS
+
+    def _remember_bridge_status(self, message: dict) -> None:
+        version = message.get("version")
+        if isinstance(version, str) and version.strip():
+            self.bridge_version = version.strip()
 
     async def run(self) -> None:
         """Build the pipeline and block until the worker finishes."""
@@ -197,7 +203,7 @@ class PipecatSession:
                     audio_in_enabled=True, audio_out_enabled=False,
                     audio_in_sample_rate=self._SAMPLE_RATE,
                     audio_in_channels=self._NUM_CHANNELS,
-                    serializer=NaoAudioBridgeSerializer(),
+                    serializer=NaoAudioBridgeSerializer(on_status=self._remember_bridge_status),
                 ),
             )
             install_single_flight_connect(transport._session)

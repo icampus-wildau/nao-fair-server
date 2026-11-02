@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +26,8 @@ from nao_fair.models import (
 from nao_fair.secrets import SecretStore
 from nao_fair.store import Store
 from nao_fair.test_driver import TestDriver
+
+logger = logging.getLogger(__name__)
 
 
 class ApiError(Exception):
@@ -91,6 +94,7 @@ class Runtime:
         self._link: Any = None
         self.browser_test: Any = None
         self._operator_disconnect = False
+        self._autostart_synced: bool | None = None
         if driver is not None:
             driver.attach(self)
 
@@ -123,6 +127,7 @@ class Runtime:
             "transcript": list(self.transcript),
             "applied": self.applied.model_dump(mode="json"),
             "active_setup_id": self.active_setup_id,
+            "autostart_synced": self._autostart_synced,
         }
 
     def status(self) -> dict:
@@ -198,10 +203,12 @@ class Runtime:
                     state="connected", address=address, name=name, failure=None
                 )
                 self.conversation_state = "idle"
+                self._autostart_synced = True if link is None else bool(getattr(link, "autostart_synced", False))
                 self.hub.emit(
                     "connection.changed",
                     connection=self.connection.model_dump(mode="json"),
                 )
+                self.hub.emit("autostart.changed", synced=self._autostart_synced)
                 result = self.connection.model_dump(mode="json")
         if late:
             if link is not None:
@@ -273,10 +280,12 @@ class Runtime:
             self._cancel_timer_locked()
             if previous != "idle":
                 self.hub.emit("conversation.state_changed", state="idle")
+            self._autostart_synced = None
             self.hub.emit(
                 "connection.changed",
                 connection=self.connection.model_dump(mode="json"),
             )
+            self.hub.emit("autostart.changed", synced=None)
             result = self.connection.model_dump(mode="json")
         if link is not None:
             await link.close()
@@ -304,10 +313,12 @@ class Runtime:
                 self._clear_transcript_locked()
                 self._cancel_timer_locked()
                 self.hub.emit("conversation.state_changed", state="idle")
+                self._autostart_synced = None
                 self.hub.emit(
                     "connection.changed",
                     connection=self.connection.model_dump(mode="json"),
                 )
+                self.hub.emit("autostart.changed", synced=None)
             if link is not None:
                 await link.close()
 
@@ -452,6 +463,7 @@ class Runtime:
             result = self.applied_view_locked()
         if link is not None:
             await link.on_audio_changed(candidate)
+            await self._push_autostart(link, notice=False)
         return result
 
     async def apply(self, screen: str, draft: dict, expected_revision: int) -> dict:
@@ -490,9 +502,25 @@ class Runtime:
             view = self.applied_view_locked()
         if link is not None and screen != "interactions":
             await link.on_applied(candidate, screen)
+        if link is not None:
+            await self._push_autostart(link, notice=True)
         if screen != "interactions":
             await self.stop_browser_test("Konfiguration übernommen. Den Mikrofontest erneut starten.")
         return view
+
+    async def _push_autostart(self, link: Any, *, notice: bool) -> None:
+        if link is None or not hasattr(link, "sync_autostart"):
+            return
+        try:
+            ok = await link.sync_autostart(self.applied)
+        except Exception:
+            logger.exception("Could not push autostart")
+            ok = False
+        with self.lock:
+            self._autostart_synced = ok
+            self.hub.emit("autostart.changed", synced=ok)
+            if notice and not ok:
+                self.hub.emit("autostart.kept")
 
     async def stop_browser_test(self, reason: str) -> None:
         with self.lock:
@@ -519,6 +547,7 @@ class Runtime:
             data["triggers"] = {
                 key: value.model_dump() for key, value in parsed.triggers.items()
             }
+            data["autostart_enabled"] = parsed.autostart_enabled
         else:
             raise ValueError("unknown screen")
         return Applied.model_validate(data)
