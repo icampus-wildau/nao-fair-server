@@ -17,7 +17,15 @@ ActionName = Literal[
     "stop_and_clear",
     "motion",
     "stop_motion",
+    "dialog_next",
+    "dialog_repeat",
+    "dialog_previous",
 ]
+GestureName = Literal["tap", "double_tap", "long_press"]
+DeliveryName = Literal["plain", "motion", "animated"]
+LineMotion = Literal["wave_left", "wave_right", "nod", "shake"]
+GESTURE_NAMES = ("tap", "double_tap", "long_press")
+LINE_MOTIONS = ("wave_left", "wave_right", "nod", "shake")
 PostureName = Literal["Sit", "Stand"]
 ConnectionState = Literal["disconnected", "connecting", "connected"]
 ConversationState = Literal["idle", "listening", "thinking", "speaking"]
@@ -41,7 +49,7 @@ class VocabularyTerm(ApiModel):
     enabled: bool
 
 
-class TriggerBinding(ApiModel):
+class GestureBinding(ApiModel):
     action: ActionName | None = None
     phrase: str = ""
     voice: str | None = None
@@ -65,7 +73,7 @@ class TriggerBinding(ApiModel):
         return value
 
     @model_validator(mode="after")
-    def action_matches_payload(self) -> TriggerBinding:
+    def action_matches_payload(self) -> GestureBinding:
         if self.action is None:
             if self.motion is not None:
                 raise ValueError("empty trigger cannot store a motion")
@@ -80,36 +88,118 @@ class TriggerBinding(ApiModel):
         return self
 
 
-def empty_binding() -> dict:
+def empty_gesture(enabled: bool = True) -> dict:
     return {
         "action": None,
         "phrase": "",
         "voice": None,
         "motion": None,
-        "enabled": True,
+        "enabled": enabled,
     }
+
+
+def trigger_from_flat(value: dict) -> dict:
+    """A saved trigger with one action becomes the tap. The other gestures copy its switch."""
+    enabled = value.get("enabled", True)
+    tap = {
+        "action": value.get("action"),
+        "phrase": value.get("phrase", ""),
+        "voice": value.get("voice"),
+        "motion": value.get("motion"),
+        "enabled": enabled,
+    }
+    return {
+        "tap": tap,
+        "double_tap": empty_gesture(enabled),
+        "long_press": empty_gesture(enabled),
+    }
+
+
+class TriggerBinding(ApiModel):
+    tap: GestureBinding
+    double_tap: GestureBinding
+    long_press: GestureBinding
+
+    @model_validator(mode="before")
+    @classmethod
+    def upgrade_flat_trigger(cls, value: object) -> object:
+        if isinstance(value, dict) and "tap" not in value and "action" in value:
+            return trigger_from_flat(value)
+        return value
+
+    def gesture(self, name: str) -> GestureBinding:
+        return getattr(self, name)
+
+
+class DialogLine(ApiModel):
+    speaker: Literal["nao", "human"] = "nao"
+    id: str = Field(min_length=1)
+    text: str
+    delivery: DeliveryName = "plain"
+    motion: LineMotion | None = None
+
+    @model_validator(mode="after")
+    def delivery_matches_motion(self) -> DialogLine:
+        if not self.text.strip():
+            raise ValueError("line text is empty")
+        if self.delivery == "motion":
+            if self.motion is None:
+                raise ValueError("motion delivery requires a motion")
+        elif self.motion is not None:
+            raise ValueError("motion is only set for a motion delivery")
+        return self
+
+
+class Dialog(ApiModel):
+    id: str = Field(min_length=1)
+    name: str
+    wrap: bool = False
+    idle_reset_secs: float | None = 300
+    lines: list[DialogLine] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def trimmed_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("dialog name is empty")
+        return name
+
+    @field_validator("idle_reset_secs")
+    @classmethod
+    def idle_reset_range(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
+        if value <= 0 or value > 86400:
+            raise ValueError("idle reset is outside 0..86400")
+        return value
+
+
+def check_dialogs(dialogs: list[Dialog], active_dialog_id: str | None) -> None:
+    ids = [item.id for item in dialogs]
+    if len(ids) != len(set(ids)):
+        raise ValueError("dialog id is duplicated")
+    names = [item.name for item in dialogs]
+    if len(names) != len(set(names)):
+        raise ValueError("dialog name is duplicated")
+    if active_dialog_id is not None and active_dialog_id not in set(ids):
+        raise ValueError("active dialog is missing")
+    for dialog in dialogs:
+        line_ids = [line.id for line in dialog.lines]
+        if len(line_ids) != len(set(line_ids)):
+            raise ValueError("line id is duplicated")
+
+
+def empty_binding() -> dict:
+    return trigger_from_flat(empty_gesture())
 
 
 def default_triggers() -> dict[str, dict]:
     triggers = {sensor_id: empty_binding() for sensor_id in SENSOR_IDS}
-    triggers["front_head"] = {
-        **empty_binding(),
-        "action": "toggle_conversation",
-    }
-    triggers["rear_head"] = {
-        **empty_binding(),
-        "action": "stop_and_clear",
-    }
-    triggers["left_bumper"] = {
-        **empty_binding(),
-        "action": "motion",
-        "motion": "wave_left",
-    }
-    triggers["right_bumper"] = {
-        **empty_binding(),
-        "action": "motion",
-        "motion": "wave_right",
-    }
+    triggers["front_head"] = trigger_from_flat({**empty_gesture(), "action": "toggle_conversation"})
+    triggers["rear_head"] = trigger_from_flat({**empty_gesture(), "action": "stop_and_clear"})
+    triggers["left_bumper"] = trigger_from_flat({**empty_gesture(), "action": "motion", "motion": "wave_left"})
+    triggers["right_bumper"] = trigger_from_flat({**empty_gesture(), "action": "motion", "motion": "wave_right"})
     return triggers
 
 
@@ -141,6 +231,8 @@ class Applied(ApiModel):
     tts_replacements: list[Replacement]
     stt_vocabulary: list[VocabularyTerm]
     triggers: dict[str, TriggerBinding]
+    dialogs: list[Dialog] = Field(default_factory=list)
+    active_dialog_id: str | None = None
     autostart_enabled: bool = True
 
     @model_validator(mode="after")
@@ -159,6 +251,7 @@ class Applied(ApiModel):
             raise ValueError("max_tokens is outside 1..128000")
         if set(self.triggers) != set(SENSOR_IDS):
             raise ValueError("triggers must contain the seven sensors")
+        check_dialogs(self.dialogs, self.active_dialog_id)
         sources = [item.source for item in self.tts_replacements]
         if any(not item.source.strip() for item in self.tts_replacements):
             raise ValueError("tts replacement source is empty")
@@ -223,7 +316,14 @@ class LlmDraft(ApiModel):
 
 class InteractionsDraft(ApiModel):
     triggers: dict[str, TriggerBinding]
+    dialogs: list[Dialog] = Field(default_factory=list)
+    active_dialog_id: str | None = None
     autostart_enabled: bool = True
+
+    @model_validator(mode="after")
+    def dialogs_belong(self) -> InteractionsDraft:
+        check_dialogs(self.dialogs, self.active_dialog_id)
+        return self
 
 
 class ApplyRequest(ApiModel):
@@ -238,10 +338,15 @@ class ConnectRequest(ApiModel):
 
 class SpeakRequest(ApiModel):
     text: str = Field(min_length=1)
+    action_key: str | None = Field(default=None, max_length=120)
 
 
 class MotionRequest(ApiModel):
     motion: Literal["wave_left", "wave_right", "nod", "shake", "sit", "stand"]
+
+
+class DialogTestRequest(ApiModel):
+    action: Literal["dialog_next", "dialog_repeat", "dialog_previous"]
 
 
 class SecretWrite(ApiModel):
@@ -286,7 +391,14 @@ class ScenarioWrite(LlmDraft):
     name: str = Field(min_length=1)
     description: str = ""
     triggers: dict[str, TriggerBinding]
+    dialogs: list[Dialog] = Field(default_factory=list)
+    active_dialog_id: str | None = None
     autostart_enabled: bool = True
+
+    @model_validator(mode="after")
+    def dialogs_belong(self) -> ScenarioWrite:
+        check_dialogs(self.dialogs, self.active_dialog_id)
+        return self
 
 
 ROBOT_FIELDS = tuple(RobotDraft.model_fields)

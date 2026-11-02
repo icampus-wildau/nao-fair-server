@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 ASSIGNMENT = "NAOFair/Autostart/Assignment"
 ASSIGNMENT_SEQ = "NAOFair/Autostart/AssignmentSeq"
+POSITION = "NAOFair/Dialog/Position"
+POSITION_SEQ = "NAOFair/Dialog/PositionSeq"
 ACK_SEQ = "NAOFair/Autostart/AckSeq"
 LEASE_COMMAND = "NAOFair/Autostart/LeaseCommand"
 LEASE_SEQ = "NAOFair/Autostart/LeaseSeq"
@@ -41,13 +43,22 @@ def assignment_document(applied: Applied) -> dict[str, Any]:
         "replacements": [[source, replacement] for source, replacement in enabled_replacements(applied)],
         "triggers": {
             sensor_id: {
-                "action": binding.action,
-                "phrase": binding.phrase,
-                "motion": binding.motion,
-                "enabled": binding.enabled,
+                gesture: {
+                    "action": slot.action,
+                    "phrase": slot.phrase,
+                    "motion": slot.motion,
+                    "enabled": slot.enabled,
+                }
+                for gesture, slot in (
+                    ("tap", binding.tap),
+                    ("double_tap", binding.double_tap),
+                    ("long_press", binding.long_press),
+                )
             }
             for sensor_id, binding in applied.triggers.items()
         },
+        "dialogs": [dialog.model_dump(mode="json") for dialog in applied.dialogs],
+        "active_dialog_id": applied.active_dialog_id,
     }
 
 

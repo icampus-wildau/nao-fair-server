@@ -8,19 +8,25 @@ from pydantic import ValidationError
 
 from nao_fair.models import InteractionsDraft, LlmDraft
 
-SCENARIO_FIELDS = tuple(LlmDraft.model_fields) + ("triggers", "autostart_enabled")
+SCENARIO_FIELDS = tuple(LlmDraft.model_fields) + ("triggers", "dialogs", "active_dialog_id", "autostart_enabled")
 
 
 def combination(payload: dict) -> dict:
     """The stored part of a scenario, checked as a language draft plus triggers."""
     llm = LlmDraft.model_validate({key: payload[key] for key in LlmDraft.model_fields})
     interaction_payload = {"triggers": payload["triggers"]}
+    if "dialogs" in payload:
+        interaction_payload["dialogs"] = payload["dialogs"]
+    if "active_dialog_id" in payload:
+        interaction_payload["active_dialog_id"] = payload["active_dialog_id"]
     if "autostart_enabled" in payload:
         interaction_payload["autostart_enabled"] = payload["autostart_enabled"]
     interactions = InteractionsDraft.model_validate(interaction_payload)
     return {
         **llm.model_dump(mode="json"),
         "triggers": {key: value.model_dump(mode="json") for key, value in interactions.triggers.items()},
+        "dialogs": [item.model_dump(mode="json") for item in interactions.dialogs],
+        "active_dialog_id": interactions.active_dialog_id,
         "autostart_enabled": interactions.autostart_enabled,
     }
 
@@ -103,6 +109,10 @@ def _apply_preset(data: dict, slot: str, payload: dict) -> None:
         if "triggers" not in payload:
             raise ValueError("interaction mappings preset missing triggers")
         data["triggers"] = payload["triggers"]
+        if "dialogs" in payload:
+            data["dialogs"] = payload["dialogs"]
+        if "active_dialog_id" in payload:
+            data["active_dialog_id"] = payload["active_dialog_id"]
         if "autostart_enabled" in payload:
             data["autostart_enabled"] = payload["autostart_enabled"]
     elif slot != "voice":

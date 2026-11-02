@@ -59,7 +59,7 @@ def test_interaction_apply_preserves_a_running_conversation(tmp_path):
         client.post('/api/robot/connect',json={'address':'192.0.2.10'})
         driver.set_conversation_state('speaking')
         state=client.get('/api/config/applied').json()['applied']
-        state['triggers']['middle_head']['action']='stop_speech'
+        state['triggers']['middle_head']['tap']['action']='stop_speech'
         result=client.post('/api/config/apply',json={'screen':'interactions','draft':{'triggers':state['triggers']},'expected_revision':state['revision']})
         assert result.status_code==200
         assert client.get('/api/robot/status').json()['conversation_state']=='speaking'

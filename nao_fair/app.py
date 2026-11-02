@@ -24,6 +24,7 @@ from nao_fair.models import (
     ConnectRequest,
     ContentUpdate,
     ContentWrite,
+    DialogTestRequest,
     MotionRequest,
     ScenarioWrite,
     SecretWrite,
@@ -217,10 +218,16 @@ async def conversation_stop_and_clear(request: Request) -> dict:
     return await _runtime(request).stop_and_clear()
 
 
+@router.post("/interactions/dialog-test")
+async def dialog_test(request: Request) -> dict:
+    body = await _body(request, DialogTestRequest)
+    return await _runtime(request).test_dialog(body.action)
+
+
 @router.post("/speech/speak")
 async def speech_speak(request: Request) -> dict:
     body = await _body(request, SpeakRequest)
-    return await _runtime(request).speak(body.text)
+    return await _runtime(request).speak(body.text, action_key=body.action_key)
 
 
 @router.post("/speech/stop")

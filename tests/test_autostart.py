@@ -67,7 +67,9 @@ def test_a_stored_configuration_without_the_switch_is_on():
     assert document["armed"] is True
     assert document["tts_language"] == "German"
     assert document["replacements"] == [["TH Wildau", "Te Ha Wildau"]]
-    assert document["triggers"]["front_head"]["action"] is None
+    assert document["triggers"]["front_head"]["tap"]["action"] is None
+    assert document["dialogs"] == []
+    assert document["active_dialog_id"] is None
 
 
 def test_applying_interactions_can_turn_autostart_off_and_a_scenario_keeps_it(tmp_path):

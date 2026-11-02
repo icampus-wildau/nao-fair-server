@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 
 from nao_fair.catalog import SENSOR_IDS
 from nao_fair.compose import enabled_replacements, prompt_sections
+from nao_fair.dialog import active_dialog, dialog_dict, line_ids, position_for, reconcile, step
 from nao_fair.events import EventHub
 from nao_fair.models import (
     Applied,
@@ -20,12 +22,13 @@ from nao_fair.models import (
     InteractionsDraft,
     LlmDraft,
     RobotDraft,
+    GestureBinding,
     ScenarioWrite,
-    TriggerBinding,
 )
 from nao_fair.secrets import SecretStore
 from nao_fair.store import Store
 from nao_fair.test_driver import TestDriver
+from nao_fair.touch import DOUBLE_SECS, LONG_SECS, TouchClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +98,9 @@ class Runtime:
         self.browser_test: Any = None
         self._operator_disconnect = False
         self._autostart_synced: bool | None = None
+        self._touch = TouchClassifier()
+        self._dialog_position: dict | None = None
+        self._pending_line_ids: list[str] | None = None
         if driver is not None:
             driver.attach(self)
 
@@ -215,6 +221,7 @@ class Runtime:
                 await link.close()
             with self.lock:
                 return self.connection.model_dump(mode="json")
+        await self._reconcile_connected_position()
         return result
 
     async def _open_link(self, address: str, generation: int) -> tuple[str, Any]:
@@ -371,15 +378,45 @@ class Runtime:
                 return
             self._set_state_locked(state)
 
-    def note_sensor(self, sensor_id: str) -> None:
-        binding: TriggerBinding | None = None
+    def note_sensor_down(self, sensor_id: str) -> None:
+        now = time.monotonic()
+        gesture = None
         with self.lock:
             if self.connection.state != "connected":
                 return
             self.hub.emit("sensor.pressed", sensor_id=sensor_id, timestamp=_iso())
-            binding = self.applied.triggers[sensor_id]
-        if binding is not None and binding.enabled and binding.action is not None:
-            self._schedule(self._run_binding(binding))
+            gesture = self._touch.down(sensor_id, now)
+        if gesture:
+            self._schedule(self._run_gesture(sensor_id, gesture))
+        else:
+            self._arm_touch(LONG_SECS)
+
+    def note_sensor_up(self, sensor_id: str) -> None:
+        now = time.monotonic()
+        gesture = None
+        with self.lock:
+            if self.connection.state != "connected":
+                return
+            gesture = self._touch.up(sensor_id, now, self._double_tap_armed_locked(sensor_id))
+        if gesture:
+            self._schedule(self._run_gesture(sensor_id, gesture))
+        else:
+            self._arm_touch(DOUBLE_SECS)
+
+    def _arm_touch(self, delay: float) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        loop.call_later(delay, self._touch_due)
+
+    def _touch_due(self) -> None:
+        now = time.monotonic()
+        with self.lock:
+            if self.connection.state != "connected":
+                return
+            found = self._touch.tick(now)
+        for sensor_id, gesture in found:
+            self._schedule(self._run_gesture(sensor_id, gesture))
 
     def _require_connected_locked(self) -> None:
         if self.connection.state != "connected":
@@ -478,9 +515,12 @@ class Runtime:
         except ValueError as exc:
             raise ApiError(422, str(exc)) from exc
         link = None
+        previous_applied = None
+        released: list[tuple[str, str]] = []
         with self.lock:
             if expected_revision != self.applied.revision:
                 raise ApiError(409, "revision mismatch")
+            previous_applied = self.applied
             candidate.revision = self.applied.revision + 1
             previous = self.conversation_state
             self.applied = candidate
@@ -498,8 +538,14 @@ class Runtime:
                 applied=candidate.model_dump(mode="json"),
                 active_setup_id=self.active_setup_id,
             )
+            if screen == "interactions":
+                released = self._touch.flush(time.monotonic(), self._double_tap_armed_locked)
             link = self._link
             view = self.applied_view_locked()
+        for sensor_id, gesture in released:
+            self._schedule(self._run_gesture(sensor_id, gesture))
+        if screen == "interactions" and previous_applied is not None:
+            await self._reconcile_applied_position(previous_applied, candidate)
         if link is not None and screen != "interactions":
             await link.on_applied(candidate, screen)
         if link is not None:
@@ -547,6 +593,8 @@ class Runtime:
             data["triggers"] = {
                 key: value.model_dump() for key, value in parsed.triggers.items()
             }
+            data["dialogs"] = [item.model_dump(mode="json") for item in parsed.dialogs]
+            data["active_dialog_id"] = parsed.active_dialog_id
             data["autostart_enabled"] = parsed.autostart_enabled
         else:
             raise ValueError("unknown screen")
@@ -639,11 +687,11 @@ class Runtime:
 
         return await self.command("stop_and_clear", run)
 
-    async def speak(self, text: str) -> dict:
+    async def speak(self, text: str, *, action_key: str | None = None) -> dict:
         async def run() -> None:
             link = self._link_or_none()
             if link is not None:
-                await link.speak(text)
+                await link.speak(text, action_key)
 
         return await self.command("speak", run)
 
@@ -675,11 +723,24 @@ class Runtime:
         with self.lock:
             return self._link
 
-    async def _run_binding(self, binding: TriggerBinding) -> None:
+    def _double_tap_armed_locked(self, sensor_id: str) -> bool:
+        binding = self.applied.triggers[sensor_id].double_tap
+        return bool(binding.enabled and binding.action is not None)
+
+    async def _run_gesture(self, sensor_id: str, gesture: str) -> None:
+        with self.lock:
+            binding = self.applied.triggers[sensor_id].gesture(gesture)
+        if binding.enabled and binding.action is not None:
+            await self._run_binding(binding, action_key=f"trigger:{sensor_id}:{gesture}")
+
+    async def _run_binding(self, binding: GestureBinding, action_key: str | None = None) -> None:
         action = binding.action
         try:
+            if action in ("dialog_next", "dialog_repeat", "dialog_previous"):
+                await self._run_dialog(action)
+                return
             if action == "speak":
-                await self.speak(binding.phrase)
+                await self.speak(binding.phrase, action_key=action_key)
                 return
             if action == "start_conversation":
                 await self._start_conversation()
@@ -719,6 +780,91 @@ class Runtime:
         if action not in ("speak",):
             with self.lock:
                 self.hub.emit("action.completed", action=action or "action")
+
+    async def test_dialog(self, action: str) -> dict:
+        self.require_robot()
+        await self._run_dialog(action)
+        return {"action": action}
+
+    async def _run_dialog(self, action: str) -> None:
+        with self.lock:
+            dialog = active_dialog(
+                [dialog_dict(item) for item in self.applied.dialogs],
+                self.applied.active_dialog_id,
+            )
+        position = await self._read_position()
+        line = step(dialog, position, action)
+        if line is None or dialog is None:
+            return
+        text = str(line.get("text") or "")
+        delivery = str(line.get("delivery") or "plain")
+        motion = line.get("motion")
+        link = self._link_or_none()
+        stored = False
+
+        async def started() -> None:
+            nonlocal stored
+            await self._write_position(position_for(str(dialog["id"]), str(line["id"]), position))
+            stored = True
+
+        try:
+            if link is None:
+                await started()
+            else:
+                await link.speak_dialog_line(text, delivery, motion, started)
+        except Exception as exc:
+            if not stored:
+                with self.lock:
+                    self.hub.emit("action.failed", action=action, error=str(exc))
+                return
+        self.note_nao_line(text)
+        with self.lock:
+            self.hub.emit("action.completed", action=action)
+
+    async def _read_position(self) -> dict | None:
+        link = self._link_or_none()
+        if link is not None and hasattr(link, "read_dialog_position"):
+            try:
+                found = await link.read_dialog_position()
+            except Exception:
+                logger.exception("Could not read the dialog position")
+                return self._dialog_position
+            self._dialog_position = found
+            return found
+        return self._dialog_position
+
+    async def _write_position(self, position: dict | None) -> None:
+        self._dialog_position = position
+        link = self._link_or_none()
+        if link is None or not hasattr(link, "write_dialog_position"):
+            return
+        try:
+            await link.write_dialog_position(position)
+        except Exception:
+            logger.exception("Could not write the dialog position")
+
+    async def _reconcile_applied_position(self, previous: Applied, candidate: Applied) -> None:
+        old = active_dialog([dialog_dict(item) for item in previous.dialogs], previous.active_dialog_id)
+        if self.connection.state != "connected":
+            self._pending_line_ids = line_ids(old)
+            return
+        await self._write_reconciled(line_ids(old), candidate)
+
+    async def _reconcile_connected_position(self) -> None:
+        with self.lock:
+            if self.connection.state != "connected":
+                return
+            candidate = self.applied
+            old_ids = self._pending_line_ids
+        await self._write_reconciled(old_ids, candidate)
+        self._pending_line_ids = None
+
+    async def _write_reconciled(self, old_ids: list[str] | None, candidate: Applied) -> None:
+        position = await self._read_position()
+        dialog = active_dialog([dialog_dict(item) for item in candidate.dialogs], candidate.active_dialog_id)
+        updated = reconcile(old_ids, line_ids(dialog), position, candidate.active_dialog_id)
+        if updated != position:
+            await self._write_position(updated)
 
     async def _start_conversation(self) -> None:
         link = self._link_or_none()

@@ -65,12 +65,60 @@ Throwing away a draft and showing the applied configuration again. The NAO Fair 
 _Avoid_: Factory reset, disconnect
 
 **Trigger**:
-One physical sensor that can be bound to an action. The seven triggers are the front, middle, and rear of the head, the back of each hand, and the two foot bumpers.
+One physical sensor. Each of its gestures can be bound to an action. The seven triggers are the front, middle, and rear of the head, the back of each hand, and the two foot bumpers.
 _Avoid_: Chest button, event
 
+**Gesture**:
+How a trigger is pressed. The gestures are tap, double tap, and long press, and only one of them happens for a press. Each gesture has its own action and is enabled on its own.
+_Avoid_: Click, event
+
+**Tap**:
+A release of a trigger that was not held into a long press and was not followed by another press soon enough to be a double tap. The interactions screen labels it Tippen.
+_Avoid_: Single press, click, short press
+
+**Double tap**:
+Two presses of the same trigger close enough together to be one gesture. The interactions screen labels it Doppeltipp.
+_Avoid_: Double click
+
+**Long press**:
+A hold of a trigger long enough to be its own gesture. Letting go does not also count as a tap. The interactions screen labels it Gedrückt halten.
+_Avoid_: Hold
+
 **Action**:
-The single behavior bound to a trigger.
+The single behavior bound to one gesture of a trigger.
 _Avoid_: Sequence, macro
+
+**Dialog**:
+An ordered list of lines in the interaction mappings. A position, the line last spoken or none, exists only for the applied active dialog. The connected app and Standby share that position.
+_Avoid_: Conversation context, script, sequence
+
+**Active dialog**:
+The one dialog that next line, repeat line, and previous line use. It is chosen in the interaction mappings, and those actions do not name a dialog of their own. There is at most one. The interactions screen labels it Aktiver Dialog.
+_Avoid_: Selected scenario, assigned dialog
+
+**Line**:
+One speakable text in a dialog, with one delivery.
+_Avoid_: Snippet, phrase, prompt
+
+**Delivery**:
+How a line is spoken: the words alone, the words together with one accompanying motion, or animated speech. The interactions screen labels it Wiedergabe, with Nur sprechen, Mit Bewegung, and Animiertes Sprechen.
+_Avoid_: Animation tag, posture
+
+**Accompanying motion**:
+Wave left, wave right, nod, or shake, played with a line. Sit and stand are not accompanying motions.
+_Avoid_: Posture, animated speech
+
+**Animated speech**:
+The robot speaking a line and moving its body on its own while it talks. The line text stays words.
+_Avoid_: Animation tag, accompanying motion
+
+**Wrap**:
+Whether a dialog treats its lines as a loop. Off, a move past either end says nothing and stays. A new dialog starts with it on. The interactions screen labels it Am Ende von vorn.
+_Avoid_: Repeat, cycle
+
+**Idle reset**:
+How long the applied active dialog keeps its position after a press that spoke a line. A next line or previous line that says nothing does not postpone it, and neither does a repeat line with nothing to say. A new dialog leaves it off. Switching it on starts at five minutes. The interactions screen labels the switch Zurücksetzen des Dialogs nach Timeout and the duration Timeout, in Minuten. A Standby restart clears the position. Apply clears it only when the active dialog changes or none is active.
+_Avoid_: Context reset, listening timeout
 
 **Conversation state**:
 Idle, Listening, Thinking, or Speaking, as the backend reports it.

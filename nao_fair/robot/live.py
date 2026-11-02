@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -57,6 +58,12 @@ class LiveLink:
         self._assignment_seq = 0
         self.last_autostart_ack = None
         self.autostart_synced = False
+        self._speech_lock = asyncio.Lock()
+        self._speech_items: list[_QueuedSpeech] = []
+        self._speech_current: str | None = None
+        self._speech_epoch = 0
+        self._speech_worker: asyncio.Task | None = None
+        self._speech_held_idle = False
 
     @classmethod
     async def open(
@@ -109,6 +116,8 @@ class LiveLink:
         if self._closing:
             return
         self._closing = True
+        async with self._speech_lock:
+            self._discard_queued_locked()
         health = self._health
         self._health = None
         if health is not None:
@@ -246,24 +255,175 @@ class LiveLink:
             NAOState.IDLE, reset_context=clear
         )
 
-    async def speak(self, text: str) -> None:
-        from naoqi_control import say_timeout_secs, speak_text
+    async def read_dialog_position(self) -> dict | None:
+        from nao_fair.robot.autostart import POSITION
+
+        def read() -> dict | None:
+            try:
+                raw = self.nao.session.service("ALMemory").getData(POSITION)
+            except Exception:
+                return None
+            if not isinstance(raw, str) or not raw.strip():
+                return None
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                return None
+            if not isinstance(data, dict) or not data.get("line_id"):
+                return None
+            return data
+
+        try:
+            return await self.nao.call_qi(read)
+        except Exception:
+            logger.exception("Could not read the dialog position")
+            return None
+
+    async def write_dialog_position(self, position: dict | None) -> None:
+        from nao_fair.robot.autostart import POSITION, POSITION_SEQ
+
+        payload = "" if not position else json.dumps(position)
+        seq = 0 if not position else int(position.get("seq") or 0)
+
+        def write() -> None:
+            memory = self.nao.session.service("ALMemory")
+            memory.insertData(POSITION, payload)
+            memory.raiseEvent(POSITION_SEQ, seq)
+
+        await self.nao.call_qi(write)
+
+    async def speak_dialog_line(self, text: str, delivery: str, motion: str | None, on_started) -> None:
+        from naoqi_control import say_timeout_secs
+        from naoqi_control.qi import QiCall
 
         from nao_fair.booth.processors.nao_speech_processor import _normalize_tts
 
         normalized = await _normalize_tts(text)
+        if delivery == "motion" and motion:
+            await self.stop_motion()
+            self._start_line_motion(motion)
+        async with self._speech_lock:
+            self._discard_queued_locked()
+            await self._stop_tts()
+            if delivery == "animated":
+                future = await self.nao.call_qi(
+                    lambda: QiCall.start(self.nao.session.service("ALAnimatedSpeech"), "say", normalized)
+                )
+            else:
+                future = await self.nao.call_qi(self.nao.tts._post_say, normalized)
+        if future is None:
+            raise RuntimeError("could not start the line")
+        await on_started()
+        timeout = say_timeout_secs(normalized)
+        try:
+            await asyncio.wait_for(QiCall.wait(future, self.nao.call_qi, lambda: self._closing), timeout)
+        except TimeoutError:
+            await self.stop_speech()
+
+    def _start_line_motion(self, motion: str) -> None:
+        body = self.nao.motion
+        if motion == "wave_left":
+            body.wave(["left"])
+        elif motion == "wave_right":
+            body.wave(["right"])
+        elif motion == "nod":
+            body.nod()
+        elif motion == "shake":
+            body.shake()
+
+    async def speak(self, text: str, action_key: str | None = None) -> None:
+        """Speak ``text`` after earlier text-speak actions.
+
+        A repeated ``action_key`` is dropped while that action is playing or
+        already waiting. Different keys stay in order. Omitting the key treats
+        the phrase itself as the action.
+        """
+        key = action_key or f"phrase:{text}"
+        async with self._speech_lock:
+            if self._closing:
+                return
+            if key == self._speech_current or any(item.key == key for item in self._speech_items):
+                return
+            item = _QueuedSpeech(key, text)
+            self._speech_items.append(item)
+            self._ensure_speech_worker_locked()
+        await item.done.wait()
+        if item.error is not None:
+            raise item.error
+
+    def _ensure_speech_worker_locked(self) -> None:
+        worker = self._speech_worker
+        if worker is None or worker.done():
+            self._speech_worker = asyncio.create_task(self._drain_speech(), name="speak-queue")
+
+    async def _drain_speech(self) -> None:
+        while not self._closing:
+            async with self._speech_lock:
+                if self._closing or not self._speech_items:
+                    self._speech_current = None
+                    self._speech_worker = None
+                    return
+                item = self._speech_items.pop(0)
+                self._speech_current = item.key
+                epoch = self._speech_epoch
+            try:
+                await self._speak_queued(item.text, epoch)
+            except Exception as exc:
+                item.error = exc
+            finally:
+                async with self._speech_lock:
+                    if self._speech_current == item.key:
+                        self._speech_current = None
+                item.done.set()
+
+    async def _speak_queued(self, text: str, epoch: int) -> None:
+        from naoqi_control import say_timeout_secs
+        from naoqi_control.qi import QiCall
+
+        from nao_fair.booth.processors.nao_speech_processor import _normalize_tts
+
+        normalized = await _normalize_tts(text)
+        async with self._speech_lock:
+            if epoch != self._speech_epoch or self._closing:
+                return
+            future = await self.nao.call_qi(self.nao.tts._post_say, normalized)
+        if future is None:
+            return
         with self.runtime.lock:
-            restore_idle = self.runtime.conversation_state == "idle"
-        if restore_idle:
+            if self.runtime.conversation_state == "idle":
+                self._speech_held_idle = True
+        if self._speech_held_idle:
             self.runtime.note_state("speaking")
         try:
-            await speak_text(self.nao, normalized, timeout=say_timeout_secs(normalized))
+            try:
+                await asyncio.wait_for(
+                    QiCall.wait(future, self.nao.call_qi, lambda: self._closing),
+                    say_timeout_secs(normalized),
+                )
+            except TimeoutError:
+                await self.stop_speech()
         finally:
             self.runtime.note_nao_line(text)
-            if restore_idle:
+            async with self._speech_lock:
+                more = bool(self._speech_items) and epoch == self._speech_epoch
+            if self._speech_held_idle and not more:
+                self._speech_held_idle = False
                 self.runtime.note_state("idle")
 
+    def _discard_queued_locked(self) -> None:
+        self._speech_epoch += 1
+        pending = self._speech_items
+        self._speech_items = []
+        self._speech_current = None
+        for item in pending:
+            item.done.set()
+
     async def stop_speech(self) -> None:
+        async with self._speech_lock:
+            self._discard_queued_locked()
+            await self._stop_tts()
+
+    async def _stop_tts(self) -> None:
         await self.nao.tts.stop_async()
 
     async def execute_motion(self, motion: str) -> None:
@@ -313,13 +473,22 @@ class LiveLink:
     def _bind_buttons(self) -> None:
         for sensor_id, attr in _BUTTON_ATTR.items():
             button = getattr(self.nao.buttons, attr)
-            button.on_pressed(self._on_pressed(sensor_id))
+            button.on_pressed(self._on_down(sensor_id))
+            button.on_released(self._on_up(sensor_id))
 
-    def _on_pressed(self, sensor_id: str):
+    def _on_down(self, sensor_id: str):
         async def callback() -> None:
             if self._closing:
                 return
-            self.runtime.note_sensor(sensor_id)
+            self.runtime.note_sensor_down(sensor_id)
+
+        return callback
+
+    def _on_up(self, sensor_id: str):
+        async def callback() -> None:
+            if self._closing:
+                return
+            self.runtime.note_sensor_up(sensor_id)
 
         return callback
 
@@ -436,6 +605,14 @@ class LiveLink:
                     misses = 0
         except asyncio.CancelledError:
             return
+
+
+class _QueuedSpeech:
+    def __init__(self, key: str, text: str) -> None:
+        self.key = key
+        self.text = text
+        self.done = asyncio.Event()
+        self.error: BaseException | None = None
 
 
 async def _quiet(task: asyncio.Task) -> None:
