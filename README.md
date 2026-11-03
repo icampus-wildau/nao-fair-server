@@ -2,6 +2,8 @@
 
 Operator backend for one NAO. One process, no login, and no simulator. It listens on `127.0.0.1:8000` unless `NAO_FAIR_HOST` or `NAO_FAIR_PORT` is set.
 
+The combined install of this server and the frontend is [nao-fair](https://github.com/icampus-wildau/nao-fair). The steps below are for this repository on its own.
+
 The API-only install supports Python 3.12 or newer. For the robot extra use Python **3.12** on Linux x86-64: `naoqi-control` requires it and the locked [`qi`](https://pypi.org/project/qi/) has no Windows or Linux ARM wheels. On Windows, use WSL or the Dev Container in [INSTALL.md](INSTALL.md).
 
 ## Setup
@@ -16,7 +18,7 @@ uv sync --locked --extra dev                              # API and tests, no ro
 uv sync --locked --extra dev --extra robot --extra browser
 ```
 
-`uv sync` removes extras not selected in the current command. When adding an extra later, include every extra you still need. The robot libraries come from PyPI, so their source checkouts are not required. See [INSTALL.md](INSTALL.md) for the complete frontend and platform setup.
+`uv sync` removes extras not selected in the current command. When adding an extra later, include every extra you still need. The robot libraries come from PyPI, so their source checkouts are not required. The frontend and platform setup is [nao-fair](https://github.com/icampus-wildau/nao-fair).
 
 OpenAI and Gladia keys are set in the NAO Fair app under **System → Schlüssel**, or with `OPENAI_API_KEY` and `GLADIA_API_KEY`. The NAO Fair app never receives the stored value. `NAO_BRIDGE_TOKEN` is the microphone-bridge path token.
 
@@ -30,7 +32,7 @@ The API is at [http://127.0.0.1:8000](http://127.0.0.1:8000). Stop with Ctrl+C. 
 
 The process starts with no robot connected. Prompts, presets, setups, and settings can be edited and applied before a connection. A successful connection sends the applied configuration.
 
-To serve the NAO Fair app from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `pnpm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173).
+To serve the NAO Fair app from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `npm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173). From a [nao-fair](https://github.com/icampus-wildau/nao-fair) checkout, `./start-nao-fair.sh` and `./start-nao-fair-dev.sh` do this.
 
 ## Test the conversation without a NAO
 
