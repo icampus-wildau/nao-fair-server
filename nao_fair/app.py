@@ -163,7 +163,10 @@ async def events(websocket: WebSocket) -> None:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(event_task, receive_task, return_exceptions=True)
-    except (WebSocketDisconnect, WebSocketDisconnected):
+    except (WebSocketDisconnect, WebSocketDisconnected, asyncio.CancelledError):
+        # Starlette's test client cancels this task as soon as it sends the
+        # disconnect. A cancellation that escapes the handler marks the portal
+        # future cancelled, so the close looks like a test failure.
         return
     finally:
         runtime.hub.unsubscribe(queue)
