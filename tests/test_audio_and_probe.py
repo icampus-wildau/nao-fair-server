@@ -30,8 +30,9 @@ def test_direct_audio_preserves_conversation_and_other_settings(tmp_path):
         assert client.patch('/api/robot/audio', json={}).status_code == 422
 
 
-def test_robot_failure_precedes_bridge_failure(tmp_path, monkeypatch):
+def test_robot_failure_precedes_a_missing_bridge(tmp_path, monkeypatch):
     from nao_fair.robot import probe
+    from nao_fair.robot.live import LiveLink
     app = create_app(db_path=tmp_path / "fair.sqlite", secrets_path=tmp_path / "secrets.json")
     calls = []
     reachable = False
@@ -44,17 +45,43 @@ def test_robot_failure_precedes_bridge_failure(tmp_path, monkeypatch):
         calls.append('bridge')
         return False
 
+    class Link:
+        robot_name = "Milo"
+        autostart_synced = False
+
+        async def close(self):
+            return None
+
+        def bridge_socket_open(self):
+            return False
+
+        def autostart_answering(self):
+            return False
+
+    async def open(**kwargs):
+        calls.append(("open", kwargs["address"]))
+        return Link()
+
     monkeypatch.setattr(probe, 'tcp_accepts', tcp)
     monkeypatch.setattr(probe, 'bridge_accepts', bridge)
+    monkeypatch.setattr(LiveLink, 'open', open)
     with TestClient(app) as client:
         failed = client.post('/api/robot/connect', json={'address': '192.0.2.10'}).json()
         assert 'NAO' in failed['failure']
         assert 'bridge' not in calls
         reachable = True
         calls.clear()
-        failed = client.post('/api/robot/connect', json={'address': '192.0.2.10'}).json()
-        assert 'Mikrofonbrücke' in failed['failure']
-        assert calls[-1] == 'bridge'
+        connected = client.post('/api/robot/connect', json={'address': '192.0.2.10'}).json()
+        assert connected['state'] == 'connected'
+        assert connected['failure'] is None
+        assert connected['name'] == 'Milo'
+        assert calls[-1] == ('open', '192.0.2.10')
+        with client.websocket_connect('/api/events') as ws:
+            picture = ws.receive_json()
+        assert picture['bridge_ready'] is False
+        assert picture['autostart_answering'] is False
+        assert client.post('/api/conversation/start').status_code == 409
+        assert client.get('/api/robot/status').json()['state'] == 'connected'
 
 
 def test_live_audio_retunes_without_replacing_the_pipeline(tmp_path):

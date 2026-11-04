@@ -102,6 +102,8 @@ def test_a_driver_connection_reports_autostart_in_sync(tmp_path):
         with client.websocket_connect("/api/events") as ws:
             picture = ws.receive_json()
         assert picture["autostart_synced"] is True
+        assert picture["bridge_ready"] is True
+        assert picture["autostart_answering"] is None
         client.post("/api/robot/disconnect")
         with client.websocket_connect("/api/events") as ws:
             assert ws.receive_json()["autostart_synced"] is None

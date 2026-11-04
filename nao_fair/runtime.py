@@ -99,6 +99,8 @@ class Runtime:
         self.browser_test: Any = None
         self._operator_disconnect = False
         self._autostart_synced: bool | None = None
+        self._bridge_ready: bool | None = None
+        self._autostart_answering: bool | None = None
         self._touch = TouchClassifier()
         self._dialog_position: dict | None = None
         self._dialog_line_speaking = False
@@ -138,6 +140,8 @@ class Runtime:
             "active_setup_id": self.active_setup_id,
             "autostart_synced": self._autostart_synced,
             "known_robots": [dict(item) for item in self.known_robots],
+            "bridge_ready": self._bridge_ready,
+            "autostart_answering": self._autostart_answering,
         }
 
     def status(self) -> dict:
@@ -221,6 +225,16 @@ class Runtime:
                 self.known_robots = self.store.remember_known_robot(address, name)
                 self.hub.emit("known_robots.changed", known_robots=[dict(item) for item in self.known_robots])
                 self.hub.emit("autostart.changed", synced=self._autostart_synced)
+                if link is None:
+                    self._bridge_ready = True
+                    self._autostart_answering = None
+                else:
+                    readiness = getattr(link, "bridge_readiness", None)
+                    answering = getattr(link, "autostart_answering", None)
+                    self._bridge_ready = readiness() if readiness else False
+                    self._autostart_answering = bool(answering()) if answering else False
+                self.hub.emit("bridge.changed", ready=self._bridge_ready)
+                self.hub.emit("autostart.answering", answering=self._autostart_answering)
                 result = self.connection.model_dump(mode="json")
                 result["known_robots"] = [dict(item) for item in self.known_robots]
         if late:
@@ -248,7 +262,7 @@ class Runtime:
             if not self._current(generation):
                 raise _Aborted()
             return name, None
-        from nao_fair.robot.probe import bridge_accepts, tcp_accepts
+        from nao_fair.robot.probe import tcp_accepts
 
         reachable = False
         for port in self.nao_ports:
@@ -259,11 +273,6 @@ class Runtime:
                 raise _Aborted()
         if not reachable:
             raise ConnectionError(f"NAO unter {address} ist nicht erreichbar. IP-Adresse, Netzwerk und Stromversorgung prüfen.")
-        if not self._current(generation):
-            raise _Aborted()
-
-        if not await bridge_accepts(address, self.bridge_port):
-            raise ConnectionError(f"NAO unter {address} ist erreichbar, aber die Mikrofonbrücke auf Port {self.bridge_port} ist nicht erreichbar.")
         if not self._current(generation):
             raise _Aborted()
         from nao_fair.robot.live import LiveLink
@@ -306,11 +315,15 @@ class Runtime:
             if previous != "idle":
                 self.hub.emit("conversation.state_changed", state="idle")
             self._autostart_synced = None
+            self._bridge_ready = None
+            self._autostart_answering = None
             self.hub.emit(
                 "connection.changed",
                 connection=self.connection.model_dump(mode="json"),
             )
             self.hub.emit("autostart.changed", synced=None)
+            self.hub.emit("bridge.changed", ready=None)
+            self.hub.emit("autostart.answering", answering=None)
             result = self.connection.model_dump(mode="json")
         if link is not None:
             await link.close()
@@ -339,11 +352,15 @@ class Runtime:
                 self._cancel_timer_locked()
                 self.hub.emit("conversation.state_changed", state="idle")
                 self._autostart_synced = None
+                self._bridge_ready = None
+                self._autostart_answering = None
                 self.hub.emit(
                     "connection.changed",
                     connection=self.connection.model_dump(mode="json"),
                 )
                 self.hub.emit("autostart.changed", synced=None)
+                self.hub.emit("bridge.changed", ready=None)
+                self.hub.emit("autostart.answering", answering=None)
             if link is not None:
                 await link.close()
 
@@ -673,7 +690,8 @@ class Runtime:
 
     async def start_conversation(self) -> dict:
         async def run() -> None:
-            await self._start_conversation()
+            if not await self._start_conversation():
+                raise ApiError(409, "Die Mikrofonbrücke ist nicht bereit.")
 
         return await self.command("start_conversation", run)
 
@@ -776,7 +794,8 @@ class Runtime:
                 )
                 return
             if action == "start_conversation":
-                await self._start_conversation()
+                if not await self._start_conversation():
+                    return
             elif action == "stop_conversation":
                 await self._stop_conversation(clear=False)
             elif action == "stop_speech":
@@ -787,7 +806,8 @@ class Runtime:
                 with self.lock:
                     idle = self.conversation_state == "idle"
                 if idle:
-                    await self._start_conversation()
+                    if not await self._start_conversation():
+                        return
                 else:
                     await self._stop_conversation(clear=False)
             elif action == "stop_and_clear":
@@ -941,13 +961,35 @@ class Runtime:
         if updated != position:
             await self._write_position(updated)
 
-    async def _start_conversation(self) -> None:
+    def note_services(self, *, bridge_ready: bool | None = None, autostart_answering: bool | None = None, bridge: bool = False, answering: bool = False) -> None:
+        """Publish a service change. Pass ``bridge`` or ``answering`` for the field that changed."""
+        with self.lock:
+            if self.connection.state != "connected":
+                return
+            bridge_event = None
+            answering_event = None
+            if bridge and bridge_ready != self._bridge_ready:
+                self._bridge_ready = bridge_ready
+                bridge_event = bridge_ready
+            if answering and autostart_answering != self._autostart_answering:
+                self._autostart_answering = autostart_answering
+                answering_event = autostart_answering
+        if bridge_event is not None:
+            self.hub.emit("bridge.changed", ready=bridge_event)
+        if answering_event is not None:
+            self.hub.emit("autostart.answering", answering=answering_event)
+
+    async def _start_conversation(self) -> bool:
         link = self._link_or_none()
         if link is not None:
+            socket_open = getattr(link, "bridge_socket_open", None)
+            if socket_open is not None and not socket_open():
+                return False
             await link.start_conversation()
-            return
+            return True
         with self.lock:
             self._set_state_locked("listening")
+        return True
 
     async def _stop_conversation(self, *, clear: bool) -> None:
         link = self._link_or_none()

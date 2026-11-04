@@ -1,4 +1,4 @@
-"""Live NAOqi session. Imported only after the microphone bridge accepts a client."""
+"""Live NAOqi session. The conversation path waits until the microphone bridge socket is up."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ if TYPE_CHECKING:
     from nao_fair.runtime import Runtime
 
 logger = logging.getLogger(__name__)
+
+_SERVICE_WATCH_SECS = 2.0
 
 _BUTTON_ATTR = {
     "front_head": "front_head",
@@ -53,6 +55,13 @@ class LiveLink:
         self._closing = False
         self._task: asyncio.Task | None = None
         self._health: asyncio.Task | None = None
+        self._bridge_watch: asyncio.Task | None = None
+        self._pipeline_lock = asyncio.Lock()
+        self._bridge_port = 0
+        self._bridge_token = ""
+        self._address = ""
+        self._bridge_seen = False
+        self._bridge_failed = False
         self._lease_task: asyncio.Task | None = None
         self._lease_seq = 0
         self._assignment_seq = 0
@@ -105,8 +114,12 @@ class LiveLink:
             await link.begin_autostart(applied)
             await link._prepare(applied)
             link._bind_buttons()
-            link._start_pipeline(applied, secrets, bridge_port, bridge_token, address)
+            link._bridge_port = bridge_port
+            link._bridge_token = bridge_token
+            link._address = address
             link._health = asyncio.create_task(link._watch_naoqi(), name="naoqi-health")
+            await link.ensure_conversation()
+            link._bridge_watch = asyncio.create_task(link._watch_bridge(), name="bridge-watch")
         except Exception as exc:
             await link.close()
             if isinstance(exc, ConnectionError):
@@ -125,6 +138,11 @@ class LiveLink:
         if health is not None:
             health.cancel()
             await _quiet(health)
+        watch = self._bridge_watch
+        self._bridge_watch = None
+        if watch is not None:
+            watch.cancel()
+            await _quiet(watch)
         await self._stop_pipeline()
         nao = self.nao
         if nao is None:
@@ -210,6 +228,8 @@ class LiveLink:
                     await write_lease(self.nao, "hold", self._lease_seq)
                     if await wait_lease_ack(self.nao, self._lease_seq):
                         self.last_autostart_ack = time.monotonic()
+                        if self.runtime is not None:
+                            self.runtime.note_services(autostart_answering=True, answering=True)
                         if not self.autostart_synced and self.runtime is not None:
                             await self.runtime._push_autostart(self, notice=False)
                             self.autostart_synced = bool(self.runtime._autostart_synced)
@@ -224,14 +244,9 @@ class LiveLink:
 
         set_tts_word_replacements(self.runtime.replacement_pairs(applied))
         await self._prepare_audio(applied)
-        await self._stop_pipeline()
-        self._start_pipeline(
-            applied,
-            self.runtime.secrets,
-            self.runtime.bridge_port,
-            self.runtime.bridge_token,
-            self.nao.ip,
-        )
+        async with self._pipeline_lock:
+            await self._stop_pipeline()
+            await self._ensure_conversation()
 
     async def on_audio_changed(self, applied: Applied) -> None:
         def update() -> None:
@@ -244,7 +259,70 @@ class LiveLink:
         if self.session is not None:
             await self.session.discard_context()
 
+    def bridge_socket_open(self) -> bool:
+        session = self.session
+        transport = getattr(session, "_transport", None)
+        client = getattr(transport, "_session", None)
+        return bool(getattr(client, "is_connected", False))
+
+    def bridge_readiness(self) -> bool | None:
+        """True once the socket is up. False when it is missing. None while the first dial is still open."""
+        if self.bridge_socket_open():
+            self._bridge_seen = True
+            self._bridge_failed = False
+            return True
+        task = self._task
+        dialing = task is not None and not task.done()
+        if self._bridge_seen or self._bridge_failed or not dialing:
+            return False
+        return None
+
+    def autostart_answering(self) -> bool:
+        last = self.last_autostart_ack
+        return last is not None and time.monotonic() - last < 6.0
+
+    async def ensure_conversation(self) -> None:
+        async with self._pipeline_lock:
+            await self._ensure_conversation()
+
+    async def _ensure_conversation(self) -> None:
+        if self._closing:
+            return
+        task = self._task
+        if task is not None and not task.done():
+            return
+        from nao_fair.robot.probe import bridge_accepts
+
+        if not await bridge_accepts(self._address, self._bridge_port):
+            self._bridge_failed = True
+            return
+        self._start_pipeline(
+            self.runtime.applied,
+            self.runtime.secrets,
+            self._bridge_port,
+            self._bridge_token,
+            self._address,
+        )
+
+    async def _watch_bridge(self) -> None:
+        try:
+            while not self._closing:
+                await asyncio.sleep(_SERVICE_WATCH_SECS)
+                if self._closing or self.runtime is None:
+                    return
+                await self.ensure_conversation()
+                self.runtime.note_services(
+                    bridge_ready=self.bridge_readiness(),
+                    autostart_answering=self.autostart_answering(),
+                    bridge=True,
+                    answering=True,
+                )
+        except asyncio.CancelledError:
+            return
+
     async def start_conversation(self) -> None:
+        if self.session is None or not self.bridge_socket_open():
+            return
         await self.session.start_conversation()
 
     async def send_message(self, text: str) -> None:
@@ -253,6 +331,8 @@ class LiveLink:
     async def stop_conversation(self, *, clear: bool) -> None:
         from nao_fair.booth.nao.nao_nlp_manager import NAOState
 
+        if self.session is None:
+            return
         await self.session._nao_nlp_manager.transition_to_state(
             NAOState.IDLE, reset_context=clear
         )
@@ -647,10 +727,11 @@ class LiveLink:
             exc = task.exception()
         except asyncio.CancelledError:
             return
-        if exc is None:
-            self.runtime.fail_disconnect("conversation pipeline ended")
-        else:
-            self.runtime.fail_disconnect(f"pipeline failed: {exc}")
+        self._bridge_failed = True
+        logger.warning("Conversation path ended", exc_info=exc)
+        note = getattr(self.runtime, "note_services", None)
+        if note is not None:
+            note(bridge_ready=False, bridge=True)
 
     async def _stop_pipeline(self) -> None:
         session = self.session

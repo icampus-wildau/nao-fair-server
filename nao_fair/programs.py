@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -163,20 +164,37 @@ def prepare_tree(repo: str, tarball_url: str, marker: str, work: Path) -> Path:
     raise RuntimeError(f"Die Veröffentlichung von {repo} enthält {marker} nicht.")
 
 
-def run_install(root: Path, host: str, password: str, version: str, known_hosts: Path) -> subprocess.CompletedProcess[str]:
+def run_install(
+    root: Path,
+    host: str,
+    password: str,
+    version: str,
+    known_hosts: Path,
+    on_line: Callable[[str], None] | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["NAO_IP"] = host
     env["NAO_PASSWORD"] = password
     env["NAO_PROGRAM_VERSION"] = version
     env["NAO_KNOWN_HOSTS"] = str(known_hosts)
     script = root / "packaging" / "install.sh"
-    return subprocess.run(
+    process = subprocess.Popen(
         ["sh", str(script), "--ip", host],
         env=env,
         text=True,
-        capture_output=True,
-        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
     )
+    chunks: list[str] = []
+    assert process.stdout is not None
+    for line in process.stdout:
+        redacted = line.replace(password, "••••") if password else line
+        chunks.append(redacted)
+        if on_line is not None and redacted.strip():
+            on_line(redacted.rstrip("\n"))
+    code = process.wait()
+    return subprocess.CompletedProcess(process.args, code, stdout="".join(chunks), stderr="")
 
 
 def _rejected_password(output: str) -> bool:
@@ -295,6 +313,7 @@ class ProgramService:
             job = _Job(program_id, password)
             self._job = job
         program = _program(program_id)
+        self._publish(job)
         thread = threading.Thread(target=self._run, args=(job, program, address), name=f"install-{program_id}", daemon=True)
         thread.start()
         return job.view()
@@ -317,21 +336,32 @@ class ProgramService:
             job.error = ""
             job.state = "installing"
             job.password_ready.set()
-            return job.view()
+            view = job.view()
+        self._publish(job)
+        return view
+
+    def _publish(self, job: _Job) -> None:
+        self.runtime.hub.emit("program.install", install=job.view())
+
+    def _line(self, line: str) -> None:
+        self.runtime.hub.emit("program.log", line=line)
 
     def _run(self, job: _Job, program: dict[str, str], address: str) -> None:
         work = Path(tempfile.mkdtemp(prefix="nao-fair-install-"))
         try:
             info = self._releases[program["id"]]
+            self._line("Veröffentlichung wird geladen …")
             root = prepare_tree(program["repo"], info["tarball"], program["marker"], work)
             self._accept_hostkey(job, address)
             while True:
                 job.state = "installing"
-                completed = run_install(root, address, job.password, info["tag"], self.known_hosts)
-                output = f"{completed.stdout}\n{completed.stderr}"
+                self._publish(job)
+                completed = run_install(root, address, job.password, info["tag"], self.known_hosts, on_line=self._line)
+                output = completed.stdout
                 if completed.returncode == 0:
                     job.state = "done"
                     job.error = ""
+                    self._publish(job)
                     return
                 if _rejected_password(output) and job.attempts < 2:
                     job.attempts += 1
@@ -340,19 +370,23 @@ class ProgramService:
                         job.password = ""
                         job.error = "Das Passwort wurde abgelehnt."
                         job.state = "password"
+                    self._publish(job)
                     if not job.password_ready.wait(timeout=300):
                         job.state = "failed"
                         job.error = "Das Passwort wurde nicht erneut eingegeben."
+                        self._publish(job)
                         return
                     continue
                 job.state = "failed"
                 job.error = _public_error(output, job.password)
+                self._publish(job)
                 return
         except Exception as exc:
             logger.exception("Robot program install failed")
             job.state = "failed"
             message = str(exc).strip() or "Die Installation ist fehlgeschlagen."
             job.error = message.replace(job.password, "••••") if job.password else message
+            self._publish(job)
         finally:
             job.password = ""
             shutil.rmtree(work, ignore_errors=True)
@@ -368,6 +402,7 @@ class ProgramService:
         with self._lock:
             job.decision.clear()
             job.state = "hostkey"
+        self._publish(job)
         if not job.decision.wait(timeout=300):
             raise RuntimeError("Der Hostschlüssel wurde nicht bestätigt.")
         if not job.accepted:

@@ -6,7 +6,7 @@ import time
 from fastapi.testclient import TestClient
 
 from nao_fair.app import create_app
-from nao_fair.programs import autostart_overview, install_action, release_tuple
+from nao_fair.programs import autostart_overview, install_action, release_tuple, run_install
 
 
 def test_release_tags_compare_only_as_versions():
@@ -53,7 +53,7 @@ def test_programs_offer_install_and_refuse_a_second_one(tmp_path, monkeypatch):
         (root / marker).write_text("marker", encoding="utf-8")
         return root
 
-    def run_install(root, host, password, version, known_hosts):
+    def run_install(root, host, password, version, known_hosts, on_line=None):
         started.set()
         time.sleep(0.4)
         completed = type("Completed", (), {})()
@@ -91,3 +91,14 @@ def test_programs_offer_install_and_refuse_a_second_one(tmp_path, monkeypatch):
         assert started.wait(3)
         assert state == "done"
         assert "secret" not in client.get("/api/programs").text
+
+
+def test_install_output_redacts_the_password(tmp_path):
+    root = tmp_path / "release"
+    (root / "packaging").mkdir(parents=True)
+    (root / "packaging" / "install.sh").write_text("#!/bin/sh\necho \"pw:$NAO_PASSWORD\"\necho ready\n", encoding="utf-8")
+    lines = []
+    completed = run_install(root, "192.0.2.10", "s3cret", "v1.0.0", tmp_path / "known", on_line=lines.append)
+    assert completed.returncode == 0
+    assert lines == ["pw:••••", "ready"]
+    assert "s3cret" not in completed.stdout

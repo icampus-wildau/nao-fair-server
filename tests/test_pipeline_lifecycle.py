@@ -34,3 +34,30 @@ def test_stopping_pipeline_for_rebuild_does_not_report_failure():
         assert runtime.failures == []
 
     asyncio.run(scenario())
+
+
+def test_a_finished_pipeline_leaves_the_robot_connected():
+    class Runtime:
+        failures = []
+        noted = []
+
+        def fail_disconnect(self, message):
+            self.failures.append(message)
+
+        def note_services(self, **payload):
+            self.noted.append(payload)
+
+    async def scenario():
+        async def boom():
+            raise RuntimeError("bridge gone")
+
+        runtime = Runtime()
+        link = LiveLink(runtime, None, "NAO")
+        link._task = asyncio.create_task(boom())
+        link._task.add_done_callback(link._pipeline_done)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert runtime.failures == []
+        assert runtime.noted == [{"bridge_ready": False, "bridge": True}]
+
+    asyncio.run(scenario())
