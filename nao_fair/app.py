@@ -245,13 +245,13 @@ async def conversation_stop_and_clear(request: Request) -> dict:
 @router.post("/interactions/dialog-test")
 async def dialog_test(request: Request) -> dict:
     body = await _body(request, DialogTestRequest)
-    return await _runtime(request).test_dialog(body.action)
+    return await _runtime(request).test_dialog(body.action, yield_next=body.yield_next, phrase=body.phrase)
 
 
 @router.post("/speech/speak")
 async def speech_speak(request: Request) -> dict:
     body = await _body(request, SpeakRequest)
-    return await _runtime(request).speak(body.text, action_key=body.action_key)
+    return await _runtime(request).speak(body.text, action_key=body.action_key, delivery=body.delivery, motion=body.motion)
 
 
 @router.post("/speech/stop")

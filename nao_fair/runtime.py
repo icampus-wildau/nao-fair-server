@@ -101,6 +101,8 @@ class Runtime:
         self._autostart_synced: bool | None = None
         self._touch = TouchClassifier()
         self._dialog_position: dict | None = None
+        self._dialog_line_speaking = False
+        self._dialog_epoch = 0
         self._pending_line_ids: list[str] | None = None
         if driver is not None:
             driver.attach(self)
@@ -703,11 +705,18 @@ class Runtime:
 
         return await self.command("stop_and_clear", run)
 
-    async def speak(self, text: str, *, action_key: str | None = None) -> dict:
+    async def speak(
+        self,
+        text: str,
+        *,
+        action_key: str | None = None,
+        delivery: str = "plain",
+        motion: str | None = None,
+    ) -> dict:
         async def run() -> None:
             link = self._link_or_none()
             if link is not None:
-                await link.speak(text, action_key)
+                await link.speak(text, action_key, delivery=delivery, motion=motion)
 
         return await self.command("speak", run)
 
@@ -753,10 +762,18 @@ class Runtime:
         action = binding.action
         try:
             if action in ("dialog_next", "dialog_repeat", "dialog_previous"):
-                await self._run_dialog(action)
+                await self._run_dialog(action, yield_next=binding.yield_next)
+                return
+            if action == "dialog_reset":
+                await self._reset_dialog(binding.phrase)
                 return
             if action == "speak":
-                await self.speak(binding.phrase, action_key=action_key)
+                await self.speak(
+                    binding.phrase,
+                    action_key=action_key,
+                    delivery=binding.delivery,
+                    motion=binding.motion,
+                )
                 return
             if action == "start_conversation":
                 await self._start_conversation()
@@ -797,13 +814,18 @@ class Runtime:
             with self.lock:
                 self.hub.emit("action.completed", action=action or "action")
 
-    async def test_dialog(self, action: str) -> dict:
+    async def test_dialog(self, action: str, *, yield_next: bool = True, phrase: str = "") -> dict:
         self.require_robot()
-        await self._run_dialog(action)
+        if action == "dialog_reset":
+            await self._reset_dialog(phrase)
+        else:
+            await self._run_dialog(action, yield_next=yield_next)
         return {"action": action}
 
-    async def _run_dialog(self, action: str) -> None:
+    async def _run_dialog(self, action: str, *, yield_next: bool = True) -> None:
         with self.lock:
+            if action == "dialog_next" and yield_next and self._dialog_line_speaking:
+                return
             dialog = active_dialog(
                 [dialog_dict(item) for item in self.applied.dialogs],
                 self.applied.active_dialog_id,
@@ -812,16 +834,25 @@ class Runtime:
         line = step(dialog, position, action)
         if line is None or dialog is None:
             return
+        with self.lock:
+            if action == "dialog_next" and yield_next and self._dialog_line_speaking:
+                return
+            self._dialog_epoch += 1
+            epoch = self._dialog_epoch
         text = str(line.get("text") or "")
         delivery = str(line.get("delivery") or "plain")
         motion = line.get("motion")
         link = self._link_or_none()
-        stored = False
+        spoke = False
 
         async def started() -> None:
-            nonlocal stored
+            nonlocal spoke
+            with self.lock:
+                if epoch != self._dialog_epoch:
+                    return
+                self._dialog_line_speaking = True
             await self._write_position(position_for(str(dialog["id"]), str(line["id"]), position))
-            stored = True
+            spoke = True
 
         try:
             if link is None:
@@ -829,13 +860,41 @@ class Runtime:
             else:
                 await link.speak_dialog_line(text, delivery, motion, started)
         except Exception as exc:
-            if not stored:
+            if not spoke:
                 with self.lock:
                     self.hub.emit("action.failed", action=action, error=str(exc))
                 return
+        finally:
+            with self.lock:
+                if epoch == self._dialog_epoch:
+                    self._dialog_line_speaking = False
+        if not spoke:
+            return
         self.note_nao_line(text)
         with self.lock:
             self.hub.emit("action.completed", action=action)
+
+    async def _reset_dialog(self, phrase: str) -> None:
+        with self.lock:
+            dialog = active_dialog(
+                [dialog_dict(item) for item in self.applied.dialogs],
+                self.applied.active_dialog_id,
+            )
+            if dialog is None:
+                return
+            self._dialog_epoch += 1
+            self._dialog_line_speaking = False
+        link = self._link_or_none()
+        if link is not None and hasattr(link, "hush_for_reset"):
+            await link.hush_for_reset()
+        await self._write_position(None)
+        text = phrase.strip()
+        if text:
+            if link is not None and hasattr(link, "speak_announcement"):
+                await link.speak_announcement(text)
+            self.note_nao_line(text)
+        with self.lock:
+            self.hub.emit("action.completed", action="dialog_reset")
 
     async def _read_position(self) -> dict | None:
         link = self._link_or_none()

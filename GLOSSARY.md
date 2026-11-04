@@ -17,7 +17,7 @@ The one NAO the NAO Fair app is connected to.
 _Avoid_: Fleet, device
 
 **Connection**:
-Whether a robot is attached right now. While disconnected the NAO Fair app still edits prompts and settings, the robot's name is unknown, and a failure can remain until the next connect attempt.
+Whether a robot is attached right now. The microphone bridge and the conversation are not part of it. While disconnected the NAO Fair app still edits prompts and settings, the robot's name is unknown, and a failure can remain until the next connect attempt.
 _Avoid_: Simulator, demo mode, session
 
 **Robot address**:
@@ -97,8 +97,24 @@ An ordered list of lines in the interaction mappings. A position, the line last 
 _Avoid_: Conversation context, script, sequence
 
 **Active dialog**:
-The one dialog that next line, repeat line, and previous line use. It is chosen in the interaction mappings, and those actions do not name a dialog of their own. There is at most one. The interactions screen labels it Aktiver Dialog.
+The one dialog that next line, repeat line, previous line, and dialog reset use. It is chosen in the interaction mappings, and those actions do not name a dialog of their own. There is at most one. The interactions screen labels it Aktiver Dialog.
 _Avoid_: Selected scenario, assigned dialog
+
+**Dialog reset**:
+An action that leaves the active dialog with no line last spoken. It stops a line of that dialog, a fixed phrase that is playing or waiting, and a conversation reply, including one that has not started, without ending the conversation or clearing its context, then says its announcement. An accompanying motion of that speech returns to the pose where it started, and its stiffness is turned off. A Bewegung gesture keeps running. A second press during the announcement stops it and says it again. With no active dialog, the press does nothing. The interactions screen labels it Dialog zurücksetzen.
+_Avoid_: Reset, idle reset, Zurücksetzen
+
+**Reset announcement**:
+Plain words a dialog-reset gesture may say after the position is cleared. They are not a line. Blank, including whitespace, means silence. A next line stops them and starts the first robot line. Previous line and repeat line leave them playing. A fixed phrase waits until they finish. The interactions screen labels the field Wortlaut.
+_Avoid_: Line, delivery
+
+**Fixed phrase**:
+The words of a Text sprechen gesture, spoken with one delivery. It waits behind other fixed phrases, the same gesture does not stack, and a dialog line cuts it off. It is not a line.
+_Avoid_: Line, reset announcement
+
+**Next-line yield**:
+A next-line gesture that does nothing while a line of the active dialog is speaking. It ends when the words end, even if an accompanying motion is still moving. Each gesture has its own. It yields unless the operator turns that off, and a next-line gesture with no choice stored yet yields. The operator's test of that gesture yields too. The interactions screen labels the switch Laufende Zeile nicht unterbrechen.
+_Avoid_: Queue, interrupt lock
 
 **Line**:
 One entry in a dialog. It is either spoken by the robot, with one delivery, or it is a planning line.
@@ -109,15 +125,15 @@ A line that records what a person says, for the operator's planning. The robot d
 _Avoid_: Visitor, Besucher, speaker
 
 **Delivery**:
-How the robot speaks a line that is not a planning line: the words alone, the words together with one accompanying motion, or animated speech. The interactions screen labels it Wiedergabe, with Nur sprechen, Mit Bewegung, and Animiertes Sprechen.
+How the robot speaks a line that is not a planning line, or a fixed phrase: the words alone, the words together with one accompanying motion, or animated speech. The interactions screen labels it Wiedergabe, with Nur sprechen, Mit Bewegung, and Animiertes Sprechen.
 _Avoid_: Animation tag, posture
 
 **Accompanying motion**:
-Wave left, wave right, nod, or shake, played with a line. Sit and stand are not accompanying motions.
+Wave left, wave right, nod, or shake, played with a line or a fixed phrase. Sit and stand are not accompanying motions.
 _Avoid_: Posture, animated speech
 
 **Animated speech**:
-The robot speaking a line and moving its body on its own while it talks. The line text stays words.
+The robot speaking a line or a fixed phrase and moving its body on its own while it talks. The text stays words.
 _Avoid_: Animation tag, accompanying motion
 
 **Wrap**:
@@ -125,8 +141,12 @@ Whether a dialog treats its lines as a loop. Off, a move past either end says no
 _Avoid_: Repeat, cycle
 
 **Idle reset**:
-How long the applied active dialog keeps its position after a press that spoke a line. A next line or previous line that says nothing does not postpone it, and neither does a repeat line with nothing to say. A new dialog leaves it off. Switching it on starts at five minutes. The interactions screen labels the switch Zurücksetzen des Dialogs nach Timeout and the duration Timeout, in Minuten. A Standby restart clears the position. Apply clears it only when the active dialog changes or none is active.
+How long the applied active dialog keeps its position after a press that spoke a line. A next line or previous line that says nothing does not postpone it, and neither does a repeat line with nothing to say. A dialog reset leaves nothing for it to clear, and its announcement does not postpone it. A new dialog leaves it off. Switching it on starts at five minutes. The interactions screen labels the switch Zurücksetzen des Dialogs nach Timeout and the duration Timeout, in Minuten. A Standby restart clears the position. Apply clears it only when the active dialog changes or none is active.
 _Avoid_: Context reset, listening timeout
+
+**Conversation**:
+The visitor's spoken exchange with the robot. It needs the microphone bridge. A line, a fixed phrase, and a gesture test are not a conversation.
+_Avoid_: Pipeline, audio pipeline
 
 **Conversation state**:
 Idle, Listening, Thinking, or Speaking, as the backend reports it.
@@ -141,8 +161,8 @@ The finished visitor and robot lines the server still holds, which a browser rec
 _Avoid_: Conversation context, history, log, interim
 
 **Microphone bridge**:
-The process on the robot that streams its front microphone to the server.
-_Avoid_: Audio pipeline, service
+The process on the robot that streams its front microphone to the server. The conversation needs it. The connection does not.
+_Avoid_: Audio pipeline, pipeline, service
 
 **Autostart process**:
 The process on the robot that performs Standby. The interactions screen does not use this name.
@@ -153,12 +173,20 @@ The applied interaction mappings, speaker volume, speech speed, TTS language, an
 _Avoid_: Fallback config, button texts, offline preset
 
 **Standby**:
-The robot acting on its standby assignment when a trigger is pressed. It does this while armed and while the NAO Fair app is not holding the triggers. The interactions screen calls this Autostart.
+The robot acting on its standby assignment when a trigger is pressed. While disarmed, only an arm toggle is acted on. The NAO Fair app holding the triggers keeps Standby from responding. The interactions screen calls this Autostart.
 _Avoid_: Fallback service, offline mode
 
 **Armed**:
-The operator's persistent choice that Standby respond to triggers. It is part of the interaction mappings, the interactions screen labels it Aktiviert im Autostart, and it is on unless an operator turns it off.
+The persistent choice that Standby respond to triggers. It is part of the interaction mappings, the interactions screen labels it Aktiviert im Autostart, and it is on unless it is turned off.
 _Avoid_: Service enabled, activated
+
+**Arm toggle**:
+An action that flips Armed and then says its arm announcement. Another arm toggle does nothing until that announcement has finished. Silence, a failed store, stopping that speech, or Apply changing Armed ends the wait. The interactions screen labels it Autostart umschalten.
+_Avoid_: Autostart switch, second standby flag
+
+**Arm announcement**:
+The plain words an arm toggle says for the Armed state it just entered. Each such gesture has its own words for on and for off. With none stored yet, they are Autostart an and Autostart aus. Blank, including whitespace, means silence. The checkbox, Apply, and adopting Armed on connect do not say it. The interactions screen labels the fields Beim Einschalten and Beim Ausschalten.
+_Avoid_: Fixed phrase, line, reset announcement
 
 **Suppressed**:
 A connection from the NAO Fair app holding the triggers, so Standby does not respond.

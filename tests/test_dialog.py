@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,7 +8,7 @@ from fastapi.testclient import TestClient
 from nao_fair.app import create_app
 from nao_fair.test_driver import TestDriver
 from nao_fair.dialog import line_ids, position_for, reconcile, step
-from nao_fair.models import Applied, Dialog, InteractionsDraft
+from nao_fair.models import Applied, Dialog, GestureBinding, InteractionsDraft
 from nao_fair.touch import TouchClassifier
 
 
@@ -196,6 +198,105 @@ def test_a_dialog_test_speaks_the_applied_line_and_then_the_next_one(tmp_path):
         assert app.state.runtime._dialog_position["line_id"] == "b"
 
 
+def test_a_missing_yield_is_on_and_speak_motion_stays_an_accompanying_motion():
+    assert GestureBinding.model_validate({"action": "dialog_next", "enabled": True}).yield_next is True
+    assert GestureBinding.model_validate({"action": "dialog_next", "yield_next": False}).yield_next is False
+    spoken = GestureBinding.model_validate(
+        {"action": "speak", "phrase": "Hi", "delivery": "motion", "motion": "nod", "enabled": True}
+    )
+    assert spoken.delivery == "motion"
+    assert spoken.motion == "nod"
+    reset = GestureBinding.model_validate({"action": "dialog_reset", "phrase": "  ", "enabled": True})
+    assert reset.phrase == "  "
+    with pytest.raises(ValidationError):
+        GestureBinding.model_validate(
+            {"action": "speak", "phrase": "Hi", "delivery": "motion", "motion": "sit", "enabled": True}
+        )
+
+
+def test_yield_drops_the_press_and_reset_clears_the_position_then_announces(tmp_path):
+    app = create_app(driver=TestDriver(), db_path=tmp_path / "fair.sqlite", secrets_path=tmp_path / "secrets.json")
+
+    class Stub:
+        def __init__(self):
+            self.calls = []
+
+        async def speak_dialog_line(self, text, delivery, motion, on_started):
+            self.calls.append(("line", text))
+            await on_started()
+
+        async def hush_for_reset(self):
+            self.calls.append("hush")
+
+        async def speak_announcement(self, text):
+            self.calls.append(("announcement", text))
+
+        async def close(self):
+            return None
+
+    with TestClient(app) as client:
+        client.post("/api/robot/connect", json={"address": "192.0.2.10"})
+        applied = client.get("/api/config/applied").json()["applied"]
+        dialog = {
+            "id": "tour",
+            "name": "Tour",
+            "wrap": False,
+            "idle_reset_secs": None,
+            "lines": [
+                {"id": "a", "text": "Erster Satz", "delivery": "plain", "motion": None},
+                {"id": "b", "text": "Zweiter Satz", "delivery": "plain", "motion": None},
+            ],
+        }
+        draft = {
+            "triggers": applied["triggers"],
+            "dialogs": [dialog],
+            "active_dialog_id": "tour",
+            "autostart_enabled": True,
+        }
+        assert client.post(
+            "/api/config/apply",
+            json={"screen": "interactions", "draft": draft, "expected_revision": applied["revision"]},
+        ).status_code == 200
+        stub = Stub()
+        app.state.runtime._link = stub
+        assert client.post("/api/interactions/dialog-test", json={"action": "dialog_next"}).status_code == 200
+        assert app.state.runtime._dialog_position["line_id"] == "a"
+        app.state.runtime._dialog_line_speaking = True
+        held = client.post("/api/interactions/dialog-test", json={"action": "dialog_next", "yield_next": True})
+        assert held.status_code == 200
+        assert stub.calls == [("line", "Erster Satz")]
+        assert app.state.runtime._dialog_position["line_id"] == "a"
+        cutting = client.post("/api/interactions/dialog-test", json={"action": "dialog_next", "yield_next": False})
+        assert cutting.status_code == 200
+        assert stub.calls[-1] == ("line", "Zweiter Satz")
+        reset = client.post(
+            "/api/interactions/dialog-test",
+            json={"action": "dialog_reset", "phrase": " Nochmal "},
+        )
+        assert reset.status_code == 200
+        assert stub.calls[-2:] == ["hush", ("announcement", "Nochmal")]
+        assert app.state.runtime._dialog_position is None
+        assert app.state.runtime.transcript[-1]["text"] == "Nochmal"
+        quiet = client.post("/api/interactions/dialog-test", json={"action": "dialog_reset", "phrase": "   "})
+        assert quiet.status_code == 200
+        assert stub.calls[-1] == "hush"
+        app.state.runtime._dialog_position = {"dialog_id": "tour", "line_id": "a", "seq": 1}
+        empty = {
+            "triggers": applied["triggers"],
+            "dialogs": [],
+            "active_dialog_id": None,
+            "autostart_enabled": True,
+        }
+        revision = client.get("/api/config/applied").json()["applied"]["revision"]
+        assert client.post(
+            "/api/config/apply",
+            json={"screen": "interactions", "draft": empty, "expected_revision": revision},
+        ).status_code == 200
+        before = list(stub.calls)
+        assert client.post("/api/interactions/dialog-test", json={"action": "dialog_reset", "phrase": "Hi"}).status_code == 200
+        assert stub.calls == before
+
+
 def test_tap_waits_double_tap_fires_on_the_second_down_and_a_hold_is_long():
     touch = TouchClassifier()
     assert touch.down("head", 0) is None
@@ -249,3 +350,30 @@ def test_tap_waits_double_tap_fires_on_the_second_down_and_a_hold_is_long():
     assert touch.flush(0.2, lambda sensor: False) == [("head", "tap")]
     assert touch.down("head", 0.21) is None
     assert touch.up("head", 0.22, wait_for_double=False) == "tap"
+
+
+def test_reset_releases_an_accompanying_motion_without_cancelling_it():
+    from nao_fair.robot.live import LiveLink
+
+    class Motion:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def stop(self) -> None:
+            self.calls.append("stop")
+
+        async def cancel(self) -> None:
+            self.calls.append("cancel")
+
+    class Tts:
+        async def stop_async(self) -> None:
+            return None
+
+    async def run() -> list[str]:
+        motion = Motion()
+        link = LiveLink(object(), type("Nao", (), {"motion": motion, "tts": Tts()})(), "NAO")
+        link._accompanying = True
+        await link.hush_for_reset()
+        return motion.calls
+
+    assert asyncio.run(run()) == ["stop"]

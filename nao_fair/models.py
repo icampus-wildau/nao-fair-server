@@ -20,6 +20,7 @@ ActionName = Literal[
     "dialog_next",
     "dialog_repeat",
     "dialog_previous",
+    "dialog_reset",
 ]
 GestureName = Literal["tap", "double_tap", "long_press"]
 DeliveryName = Literal["plain", "motion", "animated"]
@@ -55,6 +56,8 @@ class GestureBinding(ApiModel):
     voice: str | None = None
     motion: str | None = None
     enabled: bool = True
+    delivery: DeliveryName = "plain"
+    yield_next: bool = True
 
     @field_validator("voice")
     @classmethod
@@ -81,10 +84,18 @@ class GestureBinding(ApiModel):
         if self.action == "motion":
             if self.motion is None:
                 raise ValueError("motion action requires a motion")
-        elif self.motion is not None:
+            return self
+        if self.action == "speak":
+            if self.enabled and not self.phrase.strip():
+                raise ValueError("speak action requires a phrase")
+            if self.delivery == "motion":
+                if self.motion not in LINE_MOTIONS:
+                    raise ValueError("motion delivery requires an accompanying motion")
+            elif self.motion is not None:
+                raise ValueError("motion is only set for a motion delivery")
+            return self
+        if self.motion is not None:
             raise ValueError("motion is only set for a motion action")
-        if self.action == "speak" and self.enabled and not self.phrase.strip():
-            raise ValueError("speak action requires a phrase")
         return self
 
 
@@ -95,6 +106,8 @@ def empty_gesture(enabled: bool = True) -> dict:
         "voice": None,
         "motion": None,
         "enabled": enabled,
+        "delivery": "plain",
+        "yield_next": True,
     }
 
 
@@ -107,6 +120,8 @@ def trigger_from_flat(value: dict) -> dict:
         "voice": value.get("voice"),
         "motion": value.get("motion"),
         "enabled": enabled,
+        "delivery": value.get("delivery", "plain"),
+        "yield_next": value.get("yield_next", True),
     }
     return {
         "tap": tap,
@@ -339,6 +354,17 @@ class ConnectRequest(ApiModel):
 class SpeakRequest(ApiModel):
     text: str = Field(min_length=1)
     action_key: str | None = Field(default=None, max_length=120)
+    delivery: DeliveryName = "plain"
+    motion: LineMotion | None = None
+
+    @model_validator(mode="after")
+    def delivery_matches_motion(self) -> SpeakRequest:
+        if self.delivery == "motion":
+            if self.motion is None:
+                raise ValueError("motion delivery requires an accompanying motion")
+        elif self.motion is not None:
+            raise ValueError("motion is only set for a motion delivery")
+        return self
 
 
 class MotionRequest(ApiModel):
@@ -346,7 +372,9 @@ class MotionRequest(ApiModel):
 
 
 class DialogTestRequest(ApiModel):
-    action: Literal["dialog_next", "dialog_repeat", "dialog_previous"]
+    action: Literal["dialog_next", "dialog_repeat", "dialog_previous", "dialog_reset"]
+    yield_next: bool = True
+    phrase: str = ""
 
 
 class SecretWrite(ApiModel):

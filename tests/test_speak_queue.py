@@ -16,8 +16,8 @@ def test_stopping_speech_drops_a_queued_different_action():
 async def _same_action_does_not_stack() -> None:
     link, spoken, release = _link()
 
-    async def speak_queued(text: str, epoch: int) -> None:
-        del epoch
+    async def speak_queued(text: str, epoch: int, delivery: str = "plain", motion: str | None = None) -> None:
+        del epoch, delivery, motion
         spoken.append(text)
         if text == "Hallo":
             await release.wait()
@@ -44,8 +44,8 @@ async def _stop_drops_the_queued_action() -> None:
 
     link.nao = SimpleNamespace(tts=SimpleNamespace(stop_async=stop_async))
 
-    async def speak_queued(text: str, epoch: int) -> None:
-        del epoch
+    async def speak_queued(text: str, epoch: int, delivery: str = "plain", motion: str | None = None) -> None:
+        del epoch, delivery, motion
         spoken.append(text)
         await release.wait()
 

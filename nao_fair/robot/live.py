@@ -64,6 +64,8 @@ class LiveLink:
         self._speech_epoch = 0
         self._speech_worker: asyncio.Task | None = None
         self._speech_held_idle = False
+        self._accompanying = False
+        self._accompanying_token: object | None = None
 
     @classmethod
     async def open(
@@ -296,22 +298,17 @@ class LiveLink:
         from naoqi_control import say_timeout_secs
         from naoqi_control.qi import QiCall
 
-        from nao_fair.booth.processors.nao_speech_processor import _normalize_tts
-
-        normalized = await _normalize_tts(text)
+        normalized = await self._normalized(text)
+        token = self._begin_accompanying(delivery, motion)
         if delivery == "motion" and motion:
             await self.stop_motion()
             self._start_line_motion(motion)
         async with self._speech_lock:
             self._discard_queued_locked()
             await self._stop_tts()
-            if delivery == "animated":
-                future = await self.nao.call_qi(
-                    lambda: QiCall.start(self.nao.session.service("ALAnimatedSpeech"), "say", normalized)
-                )
-            else:
-                future = await self.nao.call_qi(self.nao.tts._post_say, normalized)
+            future = await self._post_say_locked(normalized, delivery)
         if future is None:
+            self._end_accompanying(token)
             raise RuntimeError("could not start the line")
         await on_started()
         timeout = say_timeout_secs(normalized)
@@ -319,6 +316,77 @@ class LiveLink:
             await asyncio.wait_for(QiCall.wait(future, self.nao.call_qi, lambda: self._closing), timeout)
         except TimeoutError:
             await self.stop_speech()
+        finally:
+            self._end_accompanying(token)
+
+    async def hush_for_reset(self) -> None:
+        """Stop a dialog line, a fixed phrase, and a conversation reply.
+
+        A Bewegung gesture is left running. The conversation stays up.
+        """
+        await self._hush_reply()
+        if self._accompanying:
+            self._accompanying = False
+            self._accompanying_token = None
+            # stopMove ends the keyframes. Cancelling the gesture would skip
+            # the return to the start pose and leave the chain stiff.
+            await self.nao.motion.stop()
+        await self.stop_speech()
+
+    async def speak_announcement(self, text: str) -> None:
+        """Say reset words immediately, then let fixed phrases wait behind them."""
+        key = f"announcement:{time.monotonic_ns()}"
+        async with self._speech_lock:
+            if self._closing:
+                return
+            item = _QueuedSpeech(key, text, "plain", None)
+            self._speech_items.append(item)
+            self._ensure_speech_worker_locked()
+        await item.done.wait()
+        if item.error is not None:
+            raise item.error
+
+    async def _hush_reply(self) -> None:
+        session = self.session
+        if session is None:
+            return
+        manager = session._nao_nlp_manager
+        state = getattr(getattr(manager, "state", None), "value", None)
+        if state not in ("speaking", "thinking"):
+            return
+        from nao_fair.booth.nao.nao_nlp_manager import NAOState
+
+        manager._resume_listening = True
+        await manager.broadcast_interruption()
+        if getattr(getattr(manager, "state", None), "value", None) in ("speaking", "thinking"):
+            await manager.transition_to_state(NAOState.LISTENING)
+
+    def _begin_accompanying(self, delivery: str, motion: str | None) -> object | None:
+        if delivery != "motion" or not motion:
+            return None
+        token = object()
+        self._accompanying = True
+        self._accompanying_token = token
+        return token
+
+    def _end_accompanying(self, token: object | None) -> None:
+        if token is not None and self._accompanying_token is token:
+            self._accompanying = False
+            self._accompanying_token = None
+
+    async def _normalized(self, text: str) -> str:
+        from nao_fair.booth.processors.nao_speech_processor import _normalize_tts
+
+        return await _normalize_tts(text)
+
+    async def _post_say_locked(self, normalized: str, delivery: str):
+        from naoqi_control.qi import QiCall
+
+        if delivery == "animated":
+            return await self.nao.call_qi(
+                lambda: QiCall.start(self.nao.session.service("ALAnimatedSpeech"), "say", normalized)
+            )
+        return await self.nao.call_qi(self.nao.tts._post_say, normalized)
 
     def _start_line_motion(self, motion: str) -> None:
         body = self.nao.motion
@@ -331,12 +399,19 @@ class LiveLink:
         elif motion == "shake":
             body.shake()
 
-    async def speak(self, text: str, action_key: str | None = None) -> None:
+    async def speak(
+        self,
+        text: str,
+        action_key: str | None = None,
+        *,
+        delivery: str = "plain",
+        motion: str | None = None,
+    ) -> None:
         """Speak ``text`` after earlier text-speak actions.
 
         A repeated ``action_key`` is dropped while that action is playing or
         already waiting. Different keys stay in order. Omitting the key treats
-        the phrase itself as the action.
+        the phrase itself as the action. Delivery waits its turn with the words.
         """
         key = action_key or f"phrase:{text}"
         async with self._speech_lock:
@@ -344,7 +419,7 @@ class LiveLink:
                 return
             if key == self._speech_current or any(item.key == key for item in self._speech_items):
                 return
-            item = _QueuedSpeech(key, text)
+            item = _QueuedSpeech(key, text, delivery, motion)
             self._speech_items.append(item)
             self._ensure_speech_worker_locked()
         await item.done.wait()
@@ -367,7 +442,7 @@ class LiveLink:
                 self._speech_current = item.key
                 epoch = self._speech_epoch
             try:
-                await self._speak_queued(item.text, epoch)
+                await self._speak_queued(item.text, epoch, item.delivery, item.motion)
             except Exception as exc:
                 item.error = exc
             finally:
@@ -376,18 +451,30 @@ class LiveLink:
                         self._speech_current = None
                 item.done.set()
 
-    async def _speak_queued(self, text: str, epoch: int) -> None:
+    async def _speak_queued(
+        self,
+        text: str,
+        epoch: int,
+        delivery: str = "plain",
+        motion: str | None = None,
+    ) -> None:
         from naoqi_control import say_timeout_secs
         from naoqi_control.qi import QiCall
 
-        from nao_fair.booth.processors.nao_speech_processor import _normalize_tts
-
-        normalized = await _normalize_tts(text)
+        normalized = await self._normalized(text)
         async with self._speech_lock:
             if epoch != self._speech_epoch or self._closing:
                 return
-            future = await self.nao.call_qi(self.nao.tts._post_say, normalized)
+        token = self._begin_accompanying(delivery, motion)
+        if delivery == "motion" and motion:
+            self._start_line_motion(motion)
+        async with self._speech_lock:
+            if epoch != self._speech_epoch or self._closing:
+                self._end_accompanying(token)
+                return
+            future = await self._post_say_locked(normalized, delivery)
         if future is None:
+            self._end_accompanying(token)
             return
         with self.runtime.lock:
             if self.runtime.conversation_state == "idle":
@@ -403,6 +490,7 @@ class LiveLink:
             except TimeoutError:
                 await self.stop_speech()
         finally:
+            self._end_accompanying(token)
             self.runtime.note_nao_line(text)
             async with self._speech_lock:
                 more = bool(self._speech_items) and epoch == self._speech_epoch
@@ -608,9 +696,11 @@ class LiveLink:
 
 
 class _QueuedSpeech:
-    def __init__(self, key: str, text: str) -> None:
+    def __init__(self, key: str, text: str, delivery: str = "plain", motion: str | None = None) -> None:
         self.key = key
         self.text = text
+        self.delivery = delivery
+        self.motion = motion
         self.done = asyncio.Event()
         self.error: BaseException | None = None
 

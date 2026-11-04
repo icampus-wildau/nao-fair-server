@@ -48,6 +48,8 @@ def assignment_document(applied: Applied) -> dict[str, Any]:
                     "phrase": slot.phrase,
                     "motion": slot.motion,
                     "enabled": slot.enabled,
+                    "delivery": slot.delivery,
+                    "yield_next": slot.yield_next,
                 }
                 for gesture, slot in (
                     ("tap", binding.tap),
