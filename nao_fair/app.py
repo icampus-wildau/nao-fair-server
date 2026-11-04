@@ -6,7 +6,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, HTTPException, Request, WebSocket
+from starlette.websockets import WebSocketDisconnect, WebSocketDisconnected
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 
@@ -125,6 +126,18 @@ async def _body(request: Request, model):
         raise ApiError(422, _validation_message(exc)) from exc
 
 
+def _client_closed(task: asyncio.Task) -> bool:
+    """True when the browser closed the event socket, including a close that arrived during a send."""
+    if not task.done() or task.cancelled():
+        return False
+    error = task.exception()
+    if isinstance(error, (WebSocketDisconnect, WebSocketDisconnected)):
+        return True
+    if error is not None:
+        raise error
+    return task.result()["type"] == "websocket.disconnect"
+
+
 @router.websocket("/events")
 async def events(websocket: WebSocket) -> None:
     runtime: Runtime = websocket.app.state.runtime
@@ -136,19 +149,21 @@ async def events(websocket: WebSocket) -> None:
             event_task = asyncio.create_task(queue.get())
             receive_task = asyncio.create_task(websocket.receive())
             try:
-                done, _ = await asyncio.wait(
+                await asyncio.wait(
                     (event_task, receive_task), return_when=asyncio.FIRST_COMPLETED
                 )
-                if receive_task in done and receive_task.result()["type"] == "websocket.disconnect":
+                if _client_closed(receive_task):
                     break
-                if event_task in done:
+                if event_task.done() and not event_task.cancelled():
                     await websocket.send_json(event_task.result())
+                    if _client_closed(receive_task):
+                        break
             finally:
                 for task in (event_task, receive_task):
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(event_task, receive_task, return_exceptions=True)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, WebSocketDisconnected):
         return
     finally:
         runtime.hub.unsubscribe(queue)

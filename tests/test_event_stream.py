@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocket
 
-from nao_fair.app import create_app
+from nao_fair.app import create_app, events
 from nao_fair.catalog import MOTIONS, SENSORS
 from nao_fair.test_driver import TestDriver
 
@@ -114,6 +115,46 @@ def test_event_stream_picture_then_live_reports(tmp_path) -> None:
             "thinking_timeout_secs",
             "unmute_delay_secs",
         }
+
+
+def test_close_during_send_ends_the_stream(tmp_path) -> None:
+    app = create_app(
+        driver=TestDriver(name="Milo"),
+        db_path=tmp_path / "fair.sqlite",
+        secrets_path=tmp_path / "secrets.json",
+    )
+
+    async def drive() -> list[str]:
+        incoming: asyncio.Queue = asyncio.Queue()
+        sent: list[str] = []
+
+        async def receive():
+            return await incoming.get()
+
+        async def send(_message):
+            return None
+
+        socket = WebSocket({"type": "websocket", "app": app}, receive, send)
+
+        async def send_json(data, mode="text"):
+            sent.append(data["type"])
+            if data["type"] == "picture":
+                app.state.runtime.hub.emit("autostart.changed", synced=True)
+                return
+            await incoming.put({"type": "websocket.disconnect", "code": 1000})
+            await asyncio.sleep(0)
+
+        socket.send_json = send_json
+        await incoming.put({"type": "websocket.connect"})
+        await events(socket)
+        return sent
+
+    try:
+        sent = asyncio.run(drive())
+    finally:
+        app.state.runtime.store.close()
+
+    assert sent == ["picture", "autostart.changed"]
 
 
 def test_disconnect_emits_transcript_replaced(tmp_path) -> None:
