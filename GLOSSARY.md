@@ -97,11 +97,15 @@ The one dialog that next line, repeat line, and previous line use. It is chosen 
 _Avoid_: Selected scenario, assigned dialog
 
 **Line**:
-One speakable text in a dialog, with one delivery.
+One entry in a dialog. It is either spoken by the robot, with one delivery, or it is a planning line.
 _Avoid_: Snippet, phrase, prompt
 
+**Planning line**:
+A line that records what a person says, for the operator's planning. The robot does not speak it, it has no delivery, it is never the line last spoken, and the Dialoge section labels it Mensch.
+_Avoid_: Visitor, Besucher, speaker
+
 **Delivery**:
-How a line is spoken: the words alone, the words together with one accompanying motion, or animated speech. The interactions screen labels it Wiedergabe, with Nur sprechen, Mit Bewegung, and Animiertes Sprechen.
+How the robot speaks a line that is not a planning line: the words alone, the words together with one accompanying motion, or animated speech. The interactions screen labels it Wiedergabe, with Nur sprechen, Mit Bewegung, and Animiertes Sprechen.
 _Avoid_: Animation tag, posture
 
 **Accompanying motion**:
