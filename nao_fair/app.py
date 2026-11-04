@@ -183,6 +183,12 @@ async def disconnect_robot(request: Request) -> dict:
     return await _runtime(request).disconnect()
 
 
+@router.post("/robot/known-robots/remove")
+async def remove_known_robot(request: Request) -> dict:
+    body = await _body(request, ConnectRequest)
+    return {"known_robots": _runtime(request).forget_known_robot(body.address)}
+
+
 @router.get("/robot/status")
 def robot_status(request: Request) -> dict:
     return _runtime(request).status()

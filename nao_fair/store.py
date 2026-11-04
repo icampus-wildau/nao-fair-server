@@ -17,6 +17,26 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def known_robots_from(raw: str | None) -> list[dict[str, str]]:
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    robots: list[dict[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        address = item.get("address")
+        name = item.get("name")
+        if isinstance(address, str) and address.strip() and isinstance(name, str) and name.strip():
+            robots.append({"address": address.strip(), "name": name.strip()})
+    return robots[:15]
+
+
 class Store:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -163,6 +183,40 @@ class Store:
         if not raw:
             return None, None
         return Applied.model_validate_json(raw), active
+
+    def load_known_robots(self) -> list[dict[str, str]]:
+        return known_robots_from(self.meta_get("known_robots"))
+
+    def remember_known_robot(self, address: str, name: str) -> list[dict[str, str]]:
+        address = address.strip()
+        name = name.strip() or "NAO"
+        if not address:
+            return self.load_known_robots()
+        with self._lock:
+            row = self.conn.execute("SELECT value FROM meta WHERE key = ?", ("known_robots",)).fetchone()
+            robots = [item for item in known_robots_from(None if row is None else str(row["value"])) if item["address"] != address]
+            robots.insert(0, {"address": address, "name": name})
+            del robots[15:]
+            self._write_known_robots(robots)
+            return robots
+
+    def forget_known_robot(self, address: str) -> list[dict[str, str]]:
+        address = address.strip()
+        with self._lock:
+            row = self.conn.execute("SELECT value FROM meta WHERE key = ?", ("known_robots",)).fetchone()
+            robots = known_robots_from(None if row is None else str(row["value"]))
+            kept = [item for item in robots if item["address"] != address]
+            if len(kept) != len(robots):
+                self._write_known_robots(kept)
+            return kept
+
+    def _write_known_robots(self, robots: list[dict[str, str]]) -> None:
+        self.conn.execute(
+            "INSERT INTO meta(key, value) VALUES('known_robots', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (json.dumps(robots),),
+        )
+        self.conn.commit()
 
     def insert_seed(self, *, content: list[dict], scenario: dict, applied: Applied, active_setup_id: str) -> None:
         with self._lock:

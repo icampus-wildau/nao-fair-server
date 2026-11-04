@@ -21,8 +21,12 @@ Whether a robot is attached right now. While disconnected the NAO Fair app still
 _Avoid_: Simulator, demo mode, session
 
 **Robot address**:
-The IP address the NAO Fair app is aimed at. The running server decides which address it last used, and after a server restart the browser's remembered address is used.
-_Avoid_: Robot name
+The IP address the NAO Fair app is aimed at.
+_Avoid_: Robot name, known robot
+
+**Known robot**:
+A robot address the server has connected to successfully, remembered with the name that robot reported. The same address is one known robot.
+_Avoid_: History, favorite, remembered address
 
 **Operator secret**:
 A cloud API secret the operator submitted through the NAO Fair app. It stays on the server and is never sent back to the browser.

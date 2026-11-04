@@ -77,6 +77,7 @@ class Runtime:
         self.connection = Connection(
             state="disconnected", address=None, name=None, failure=None
         )
+        self.known_robots = store.load_known_robots()
         self.conversation_state = "idle"
         self.transcript: list[dict[str, str]] = []
         self.applied = applied
@@ -134,6 +135,7 @@ class Runtime:
             "applied": self.applied.model_dump(mode="json"),
             "active_setup_id": self.active_setup_id,
             "autostart_synced": self._autostart_synced,
+            "known_robots": [dict(item) for item in self.known_robots],
         }
 
     def status(self) -> dict:
@@ -214,8 +216,11 @@ class Runtime:
                     "connection.changed",
                     connection=self.connection.model_dump(mode="json"),
                 )
+                self.known_robots = self.store.remember_known_robot(address, name)
+                self.hub.emit("known_robots.changed", known_robots=[dict(item) for item in self.known_robots])
                 self.hub.emit("autostart.changed", synced=self._autostart_synced)
                 result = self.connection.model_dump(mode="json")
+                result["known_robots"] = [dict(item) for item in self.known_robots]
         if late:
             if link is not None:
                 await link.close()
@@ -223,6 +228,17 @@ class Runtime:
                 return self.connection.model_dump(mode="json")
         await self._reconcile_connected_position()
         return result
+
+    def forget_known_robot(self, address: str) -> list[dict[str, str]]:
+        address = address.strip()
+        if not address or any(char.isspace() for char in address):
+            raise ApiError(400, "address is required")
+        with self.lock:
+            previous = list(self.known_robots)
+            self.known_robots = self.store.forget_known_robot(address)
+            if self.known_robots != previous:
+                self.hub.emit("known_robots.changed", known_robots=[dict(item) for item in self.known_robots])
+            return [dict(item) for item in self.known_robots]
 
     async def _open_link(self, address: str, generation: int) -> tuple[str, Any]:
         if self.driver is not None:
