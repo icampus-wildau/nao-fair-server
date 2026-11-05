@@ -26,6 +26,7 @@ LEASE_COMMAND = "NAOFair/Autostart/LeaseCommand"
 LEASE_SEQ = "NAOFair/Autostart/LeaseSeq"
 LEASE_ACK_SEQ = "NAOFair/Autostart/LeaseAckSeq"
 VERSION = "NAOFair/Autostart/Version"
+ARMED_STATE = "NAOFair/Autostart/ArmedState"
 
 ACK_TIMEOUT_SECS = 2.0
 LEASE_PERIOD_SECS = 1.0
@@ -89,6 +90,25 @@ async def write_lease(nao: Any, command: str, seq: int) -> None:
 
 async def wait_lease_ack(nao: Any, seq: int, *, timeout: float = ACK_TIMEOUT_SECS) -> bool:
     return await _wait_equal(nao, LEASE_ACK_SEQ, seq, timeout)
+
+
+async def read_armed_state(nao: Any) -> dict | None:
+    def read():
+        try:
+            value = nao.session.service("ALMemory").getData(ARMED_STATE)
+            data = json.loads(value)
+        except (ValueError, TypeError, RuntimeError):
+            return None
+        if not isinstance(data, dict) or not isinstance(data.get("armed"), bool):
+            return None
+        if not isinstance(data.get("change"), str) or not data["change"]:
+            return None
+        return data
+    try:
+        return await nao.call_qi(read, timeout=2.0)
+    except Exception:
+        logger.exception("Could not read robot autostart switch")
+        return None
 
 
 async def read_reported_version(nao: Any) -> str | None:

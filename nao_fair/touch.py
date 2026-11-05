@@ -17,6 +17,11 @@ class TouchClassifier:
         self._bounce: dict[str, bool] = {}
         self._suppress: dict[str, float] = {}
 
+    def discard(self, sensor: str) -> None:
+        for state in (self._down, self._held_long, self._consumed, self._pending,
+                      self._release, self._bounce, self._suppress):
+            state.pop(sensor, None)
+
     def down(self, sensor: str, now: float) -> str | None:
         if self._suppressed(sensor, now):
             self._bounce[sensor] = True
@@ -41,13 +46,16 @@ class TouchClassifier:
         if self._bounce.get(sensor):
             self._bounce[sensor] = False
             return None
-        if self._down.get(sensor) is None:
+        down = self._down.get(sensor)
+        if down is None:
             return None
         held_long = self._held_long.get(sensor, False)
         consumed = self._consumed.get(sensor, False)
         self._down[sensor] = None
         if held_long or consumed:
             return None
+        if now - down >= LONG_SECS:
+            return "long_press"
         if not wait_for_double:
             self._suppress[sensor] = now + BOUNCE_SECS
             return "tap"

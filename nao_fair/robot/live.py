@@ -65,6 +65,7 @@ class LiveLink:
         self._lease_task: asyncio.Task | None = None
         self._lease_seq = 0
         self._assignment_seq = 0
+        self._arm_change = None
         self.last_autostart_ack = None
         self.autostart_synced = False
         self._speech_lock = asyncio.Lock()
@@ -166,12 +167,24 @@ class LiveLink:
 
     async def begin_autostart(self, applied: Applied) -> None:
         """Store the assignment, take the lease, then quiet the robot."""
+        await self.hold_autostart(start_renewal=False)
+        from nao_fair.robot.autostart import wait_lease_ack, write_lease
+        held = await wait_lease_ack(self.nao, self._lease_seq)
+        if held:
+            await self._read_robot_armed(force=True)
+        if self.runtime is not None:
+            applied = self.runtime.applied
         try:
             self.autostart_synced = await self.sync_autostart(applied)
         except Exception:
             logger.exception("Could not push autostart")
             self.autostart_synced = False
-        await self.hold_autostart()
+        if self.autostart_synced and not held:
+            self._lease_seq += 1
+            await write_lease(self.nao, "hold", self._lease_seq)
+            if not await wait_lease_ack(self.nao, self._lease_seq, timeout=10.0):
+                raise RuntimeError("Der Autostart-Prozess hat die Steuerung nicht freigegeben.")
+        self._lease_task = asyncio.create_task(self._renew_autostart(), name="autostart-lease")
         if self.nao is None:
             return
         try:
@@ -187,9 +200,23 @@ class LiveLink:
         from nao_fair.robot.autostart import assignment_document, push_assignment
 
         self._assignment_seq += 1
-        return await push_assignment(self.nao, assignment_document(applied), self._assignment_seq)
+        document = assignment_document(applied)
+        if self._arm_change is not None:
+            document["_expected_arm_change_id"] = self._arm_change
+        self.autostart_synced = await push_assignment(self.nao, document, self._assignment_seq)
+        return self.autostart_synced
 
-    async def hold_autostart(self) -> None:
+    async def _read_robot_armed(self, *, force: bool = False) -> None:
+        from nao_fair.robot.autostart import read_armed_state
+        state = await read_armed_state(self.nao)
+        if state is None:
+            return
+        if force or state["change"] != self._arm_change:
+            if self.runtime is not None:
+                self.runtime.adopt_robot_armed(state["armed"])
+            self._arm_change = state["change"]
+
+    async def hold_autostart(self, *, start_renewal: bool = True) -> None:
         if self._lease_task is not None:
             return
         self._lease_seq += 1
@@ -200,7 +227,8 @@ class LiveLink:
             if not await wait_lease_ack(self.nao, self._lease_seq, timeout=10.0):
                 raise RuntimeError("Der Autostart-Prozess hat die Steuerung nicht freigegeben.")
             self.last_autostart_ack = time.monotonic()
-        self._lease_task = asyncio.create_task(self._renew_autostart(), name="autostart-lease")
+        if start_renewal:
+            self._lease_task = asyncio.create_task(self._renew_autostart(), name="autostart-lease")
 
     async def release_autostart(self) -> None:
         task = self._lease_task
@@ -228,6 +256,7 @@ class LiveLink:
                     await write_lease(self.nao, "hold", self._lease_seq)
                     if await wait_lease_ack(self.nao, self._lease_seq):
                         self.last_autostart_ack = time.monotonic()
+                        await self._read_robot_armed()
                         if self.runtime is not None:
                             self.runtime.note_services(autostart_answering=True, answering=True)
                         if not self.autostart_synced and self.runtime is not None:

@@ -102,6 +102,8 @@ class Runtime:
         self._bridge_ready: bool | None = None
         self._autostart_answering: bool | None = None
         self._touch = TouchClassifier()
+        self._bumper_down: dict[str, float] = {}
+        self._bumper_pair = False
         self._dialog_position: dict | None = None
         self._dialog_line_speaking = False
         self._dialog_epoch = 0
@@ -303,6 +305,9 @@ class Runtime:
                 return self.connection.model_dump(mode="json")
             link = self._link
             self._link = None
+            self._bumper_down.clear()
+            self._bumper_pair = False
+            self._touch = TouchClassifier()
             self._operator_disconnect = True
             address = self.connection.address
             previous = self.conversation_state
@@ -343,6 +348,9 @@ class Runtime:
                 self._generation += 1
                 link = self._link
                 self._link = None
+                self._bumper_down.clear()
+                self._bumper_pair = False
+                self._touch = TouchClassifier()
                 address = self.connection.address
                 self.connection = Connection(
                     state="disconnected", address=address, name=None, failure=message
@@ -413,6 +421,18 @@ class Runtime:
                 return
             self._set_state_locked(state)
 
+    def adopt_robot_armed(self, armed: bool) -> None:
+        with self.lock:
+            if self.applied.autostart_enabled == armed:
+                return
+            updated = self.applied.model_copy(update={
+                "autostart_enabled": armed, "revision": self.applied.revision + 1,
+            })
+            self.store.save_runtime(updated, self.active_setup_id, self.prompt_snapshot, self.applied_content)
+            self.applied = updated
+            self.hub.emit("config.applied", applied=updated.model_dump(mode="json"),
+                          active_setup_id=self.active_setup_id)
+
     def note_sensor_down(self, sensor_id: str) -> None:
         now = time.monotonic()
         gesture = None
@@ -420,6 +440,14 @@ class Runtime:
             if self.connection.state != "connected":
                 return
             self.hub.emit("sensor.pressed", sensor_id=sensor_id, timestamp=_iso())
+            if sensor_id in ("left_bumper", "right_bumper"):
+                self._bumper_down.setdefault(sensor_id, now)
+                if len(self._bumper_down) == 2 and now - min(self._bumper_down.values()) < LONG_SECS:
+                    self._bumper_pair = True
+                    self._touch.discard("left_bumper")
+                    self._touch.discard("right_bumper")
+                if self._bumper_pair:
+                    return
             gesture = self._touch.down(sensor_id, now)
         if gesture:
             self._schedule(self._run_gesture(sensor_id, gesture))
@@ -432,6 +460,13 @@ class Runtime:
         with self.lock:
             if self.connection.state != "connected":
                 return
+            if sensor_id in ("left_bumper", "right_bumper"):
+                self._bumper_down.pop(sensor_id, None)
+                if self._bumper_pair:
+                    self._touch.discard(sensor_id)
+                    if not self._bumper_down:
+                        self._bumper_pair = False
+                    return
             gesture = self._touch.up(sensor_id, now, self._double_tap_armed_locked(sensor_id))
         if gesture:
             self._schedule(self._run_gesture(sensor_id, gesture))

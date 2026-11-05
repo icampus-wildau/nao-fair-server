@@ -173,19 +173,19 @@ The applied interaction mappings, speaker volume, speech speed, TTS language, an
 _Avoid_: Fallback config, button texts, offline preset
 
 **Standby**:
-The robot acting on its standby assignment when a trigger is pressed. While disarmed, only an arm toggle is acted on. The NAO Fair app holding the triggers keeps Standby from responding. The interactions screen calls this Autostart.
+The robot acting on its standby assignment when a trigger is pressed. While disarmed, only an arm chord is acted on. The NAO Fair app holding the triggers keeps Standby from responding. The interactions screen calls this Autostart.
 _Avoid_: Fallback service, offline mode
 
 **Armed**:
 The persistent choice that Standby respond to triggers. It is part of the interaction mappings, the interactions screen labels it Aktiviert im Autostart, and it is on unless it is turned off.
 _Avoid_: Service enabled, activated
 
-**Arm toggle**:
-An action that flips Armed and then says its arm announcement. Another arm toggle does nothing until that announcement has finished. Silence, a failed store, stopping that speech, or Apply changing Armed ends the wait. The interactions screen labels it Autostart umschalten.
-_Avoid_: Autostart switch, second standby flag
+**Arm chord**:
+Both foot bumpers held together for more than two seconds. The second bumper joins before either long press, and that hold is not also a bumper gesture. It flips Armed, whether or not the NAO Fair app is connected. It is not an action, and the NAO Fair app cannot assign it to a trigger.
+_Avoid_: Arm toggle, gesture, configurable action
 
 **Arm announcement**:
-The plain words an arm toggle says for the Armed state it just entered. Each such gesture has its own words for on and for off. With none stored yet, they are Autostart an and Autostart aus. Blank, including whitespace, means silence. The checkbox, Apply, and adopting Armed on connect do not say it. The interactions screen labels the fields Beim Einschalten and Beim Ausschalten.
+The plain words an arm chord says for the Armed state it just entered. They are Autostart ein and Autostart aus. The checkbox, Apply, and adopting Armed on connect do not say it.
 _Avoid_: Fixed phrase, line, reset announcement
 
 **Suppressed**:
