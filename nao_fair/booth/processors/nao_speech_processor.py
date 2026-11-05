@@ -2,7 +2,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 import uuid
 from collections.abc import Awaitable, Callable
@@ -58,37 +57,7 @@ _TTS_REPLACEMENTS = {
     "\u201e": "\"",
 }
 
-_TTS_WORD_REPLACEMENTS_PATH = (
-    Path(__file__).resolve().parents[3] / "prompts" / "tts_replacements.txt"
-)
-
-
-def _load_tts_word_replacements(
-    path: Path | None = None,
-) -> list[tuple[str, str]]:
-    file_path = path if path is not None else _TTS_WORD_REPLACEMENTS_PATH
-    if not file_path.is_file():
-        return []
-    content = file_path.read_text(encoding="utf-8")
-    if not content.strip():
-        return []
-    pairs: list[tuple[str, str]] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if " -> " not in stripped:
-            continue
-        left, right = stripped.split(" -> ", 1)
-        left = left.strip()
-        right = right.strip()
-        if not left or not right:
-            continue
-        pairs.append((rf"\b{re.escape(left)}\b", right))
-    return pairs
-
-
-_tts_word_pairs: list[tuple[str, str]] = _load_tts_word_replacements()
+_tts_word_pairs: list[tuple[str, str]] = []
 
 
 def set_tts_word_replacements(pairs: list[tuple[str, str]]) -> None:

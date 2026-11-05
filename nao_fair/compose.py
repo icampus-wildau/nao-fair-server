@@ -26,7 +26,7 @@ def prompt_sections(store: Store, applied: Applied, robot_name: str) -> list[str
 
     personality = _markdown(store, applied.personality_id, "personality")
     system = _markdown(store, applied.system_prompt_id, "system_prompt")
-    local = _markdown(store, applied.local_context_id, "local_context")
+    local = _markdown(store, applied.local_context_id, "local_context") if applied.local_context_id else ""
     sections = [fill(personality), fill(system)]
     for knowledge_id in applied.knowledge_ids:
         sections.append(fill(_markdown(store, knowledge_id, "knowledge")))

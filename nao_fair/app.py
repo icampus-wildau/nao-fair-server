@@ -39,8 +39,6 @@ def create_app(
     serve_frontend: bool = True,
     db_path=None,
     secrets_path=None,
-    config_path=None,
-    prompts_dir=None,
     bridge_port: int | None = None,
     nao_ports: list[int] | None = None,
     bridge_token: str | None = None,
@@ -49,11 +47,7 @@ def create_app(
     settings = Settings.from_env()
     store = Store(db_path or settings.db_path)
     store.open()
-    seed_if_needed(
-        store,
-        config_path=config_path or settings.config_path,
-        prompts_dir=prompts_dir or settings.prompts_dir,
-    )
+    seed_if_needed(store)
     runtime = Runtime(
         store,
         SecretStore(secrets_path or settings.secrets_path),

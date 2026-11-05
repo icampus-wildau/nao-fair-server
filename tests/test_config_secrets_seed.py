@@ -5,6 +5,7 @@ import json
 from fastapi.testclient import TestClient
 
 from nao_fair.app import create_app
+from nao_fair.models import LlmDraft
 from nao_fair.test_driver import TestDriver
 
 
@@ -140,10 +141,10 @@ def test_seed_runs_once_and_a_scenario_survives_restart(tmp_path) -> None:
     app = create_app(db_path=db_path, secrets_path=secrets_path)
     with TestClient(app) as client:
         scenarios = client.get("/api/scenarios").json()
-        assert len(scenarios) == 1
-        assert scenarios[0]["name"] == "Standard"
-        body = {key: value for key, value in scenarios[0].items() if key != "id"}
-        body.update({"name": "Warm", "description": "kept"})
+        assert scenarios == []
+        applied = client.get("/api/config/applied").json()["applied"]
+        body = {key: applied[key] for key in LlmDraft.model_fields}
+        body.update({"name": "Warm", "description": "kept", "triggers": applied["triggers"]})
         created = client.post("/api/scenarios", json=body)
         assert created.status_code == 200
         scenario_id = created.json()["id"]
@@ -151,8 +152,7 @@ def test_seed_runs_once_and_a_scenario_survives_restart(tmp_path) -> None:
     restarted = create_app(db_path=db_path, secrets_path=secrets_path)
     with TestClient(restarted) as client:
         scenarios = client.get("/api/scenarios").json()
-        assert len(scenarios) == 2
-        assert any(item["name"] == "Standard" for item in scenarios)
+        assert len(scenarios) == 1
         loaded = client.get(f"/api/scenarios/{scenario_id}")
         assert loaded.status_code == 200
         assert loaded.json()["name"] == "Warm"

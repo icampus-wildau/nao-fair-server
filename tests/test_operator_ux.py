@@ -19,11 +19,15 @@ def test_system_reports_local_readiness_without_revealing_secrets(tmp_path):
         assert 'private-test-secret' not in result.text
 
 
-def test_seeded_scenario_keeps_prompt_selection_and_leaves_volume_out(tmp_path):
+def test_saved_scenario_keeps_prompt_selection_and_leaves_volume_out(tmp_path):
     with client_for(tmp_path) as client:
         applied=client.get('/api/config/applied').json()['applied']
-        scenario=client.get('/api/scenarios').json()[0]
-        assert scenario['name']=='Standard'
+        from nao_fair.models import LlmDraft
+        body={key:applied[key] for key in LlmDraft.model_fields}
+        body.update({'name':'Test','triggers':applied['triggers']})
+        response=client.post('/api/scenarios',json=body)
+        assert response.status_code==200
+        scenario=response.json()
         assert scenario['personality_id']==applied['personality_id']
         assert scenario['system_prompt_id']==applied['system_prompt_id']
         assert 'volume' not in scenario
@@ -35,6 +39,11 @@ def test_referenced_content_requires_a_valid_replacement_and_updates_scenarios(t
     with client_for(tmp_path) as client:
         original=client.get('/api/content',params={'kind':'system_prompt'}).json()[0]
         replacement=client.post('/api/content',json={'kind':'system_prompt','name':'Z Ersatz','markdown':'Hallo'}).json()
+        from nao_fair.models import LlmDraft
+        applied=client.get('/api/config/applied').json()['applied']
+        scenario={key:applied[key] for key in LlmDraft.model_fields}
+        scenario.update({'name':'Test','triggers':applied['triggers']})
+        assert client.post('/api/scenarios',json=scenario).status_code==200
         refs=client.get(f"/api/content/{original['id']}/references")
         assert refs.status_code==200
         assert refs.json()['applied'] is True

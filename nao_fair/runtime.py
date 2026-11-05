@@ -686,14 +686,15 @@ class Runtime:
 
     def _validate_references(self, applied: Applied) -> None:
         self._require_content(applied.system_prompt_id, "system_prompt")
-        self._require_content(applied.local_context_id, "local_context")
+        if applied.local_context_id is not None:
+            self._require_content(applied.local_context_id, "local_context")
         self._require_content(applied.personality_id, "personality")
         for knowledge_id in applied.knowledge_ids:
             self._require_content(knowledge_id, "knowledge")
 
     def _content_snapshot(self, applied: Applied) -> dict[str, str]:
         ids = [applied.system_prompt_id, applied.local_context_id, applied.personality_id, *applied.knowledge_ids]
-        return {item_id: self.store.get_content(item_id)["markdown"] for item_id in ids}
+        return {item_id: self.store.get_content(item_id)["markdown"] for item_id in ids if item_id is not None}
 
     def content_view(self) -> dict:
         with self.lock:

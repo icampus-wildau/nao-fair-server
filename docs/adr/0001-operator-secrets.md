@@ -1,17 +1,14 @@
-# Operator secrets live outside presets
+# Operator secrets live outside configuration
 
 ## Status
 
 Accepted
 
-## Context
+The app needs OpenAI and Gladia secrets, while configuration can be copied and
+reused. Operator secrets therefore live in a separate server file and the API
+returns only their source status. Operator values override environment values;
+deleting one restores the environment fallback. This keeps configuration reuse
+from carrying credentials while allowing unattended environment-based startup.
 
-The NAO Fair app needs an OpenAI secret and a Gladia secret. A fair setup is copied, activated, and may later be exported. The bridge token and the robot password are not part of this.
-
-## Decision
-
-Operator secrets are stored in their own file, not in presets, setups, the applied configuration, or the picture. The API reports only `missing`, `environment`, or `console`. A value written from the NAO Fair app overrides the environment secret for that slot. Deleting the operator secret makes the environment secret apply again. A blank write does not clear a stored value. The new value is read the next time that client is opened.
-
-## Consequences
-
-Restarting the process keeps a console secret. Copying a preset or a setup cannot leak it. The environment can still supply a secret for an unattended start.
+The bridge token and robot SSH password are separate concerns. Current write
+and client-refresh semantics are in [behavior](../behavior.md#persistence-prompts-and-secrets).

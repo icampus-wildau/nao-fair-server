@@ -210,12 +210,7 @@ def empty_binding() -> dict:
 
 
 def default_triggers() -> dict[str, dict]:
-    triggers = {sensor_id: empty_binding() for sensor_id in SENSOR_IDS}
-    triggers["front_head"] = trigger_from_flat({**empty_gesture(), "action": "toggle_conversation"})
-    triggers["rear_head"] = trigger_from_flat({**empty_gesture(), "action": "stop_and_clear"})
-    triggers["left_bumper"] = trigger_from_flat({**empty_gesture(), "action": "motion", "motion": "wave_left"})
-    triggers["right_bumper"] = trigger_from_flat({**empty_gesture(), "action": "motion", "motion": "wave_right"})
-    return triggers
+    return {sensor_id: empty_binding() for sensor_id in SENSOR_IDS}
 
 
 class Applied(ApiModel):
@@ -241,7 +236,7 @@ class Applied(ApiModel):
     gladia_language: str = Field(min_length=1)
     system_prompt_id: str = Field(min_length=1)
     knowledge_ids: list[str]
-    local_context_id: str = Field(min_length=1)
+    local_context_id: str | None = Field(default=None, min_length=1)
     personality_id: str = Field(min_length=1)
     tts_replacements: list[Replacement]
     stt_vocabulary: list[VocabularyTerm]
@@ -323,7 +318,7 @@ class LlmDraft(ApiModel):
     gladia_language: str = Field(min_length=1)
     system_prompt_id: str = Field(min_length=1)
     knowledge_ids: list[str]
-    local_context_id: str = Field(min_length=1)
+    local_context_id: str | None = Field(default=None, min_length=1)
     personality_id: str = Field(min_length=1)
     tts_replacements: list[Replacement]
     stt_vocabulary: list[VocabularyTerm]

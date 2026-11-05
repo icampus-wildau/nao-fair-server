@@ -2,4 +2,12 @@
 
 Each dialog could have kept its own bookmark, and Apply could have cleared that bookmark every time. Line edits only reach the robot through Apply, so a blanket clear would throw away the rule that the position follows the line.
 
-Only the applied active dialog has a position. Inactive dialogs are a library and start with no line spoken when they become active. Apply keeps the position when the active dialog is unchanged and the line last spoken is still in it, including after that line is moved. Deleting that line makes the line before it the last spoken one. Apply clears the position when the active dialog changes or when none is active. A Standby restart starts with no line spoken. Idle reset still clears it after the dialog's own quiet period. Only a press that speaks a line postpones that period. The position moves when a line starts. If the line never starts, the position stays where it was. A later line stops the one already speaking and becomes the line last spoken. The connected app and Standby share this position, so a rehearsal continues after the app lets go. Restarting the NAO Fair server does not clear it. Restarting Standby does.
+Only the applied active dialog has a position, identified by the last robot line
+that actually started speaking. Apply reconciles that position by stable line id
+instead of clearing it for every edit. Inactive dialogs are a library, not a set
+of independent bookmarks.
+
+The app and Standby share the position on the robot so a rehearsal continues
+after the app lets go. Persisting separate positions in the two runtimes would
+make handoff repeat or skip lines. Detailed edit, restart, and idle-reset rules
+are in [behavior](../behavior.md#dialog-playback).

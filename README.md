@@ -7,8 +7,9 @@
 ![License: Apache 2.0](https://img.shields.io/badge/license-Apache%20License%202.0-blue)
 
 App to manage the features of the NAO Fair app for one NAO:
+
 - Control the Pipecat speech pipeline
-- Store and apply presets / scenarios for the robot in different settings, e.g. fairs, exhibitions, etc.
+- Store scenarios, load them into a draft, and explicitly apply configuration
 - Connect to the robot and control its features
 - Control autostart assignments for the NAO
 
@@ -36,7 +37,15 @@ The robot libraries come from PyPI. OpenAI and Gladia keys are set in the app un
 uv run nao-fair   # http://127.0.0.1:8000 ; Ctrl+C stops it
 ```
 
-The process starts with no robot connected. Prompts, presets, setups, and settings can be edited and applied before a connection. A successful connection sends the applied configuration.
+The process starts with no robot connected. Prompts, scenarios, dialogs, and settings can be edited before a connection. Loading or saving a scenario leaves the runtime unchanged; **Übernehmen** applies configuration. A successful connection sends the applied configuration. The microphone bridge is required for a conversation, while other robot controls work over NAOqi alone.
+
+The first start initializes a database with built-in settings, a German system
+prompt, and a short, friendly personality. Knowledge, local context, pronunciation
+rules, recognition vocabulary, dialogs, scenarios, and sensor actions start empty.
+Local context is optional. Edit and apply content through the app/API; existing
+databases retain their configuration when the server is updated. Defaults live
+in `nao_fair/defaults.py`, `nao_fair/booth/config.py`, and `nao_fair/seed.py`;
+no external config or prompt files are needed.
 
 To serve the app from this process, build [nao-fair-frontend](https://github.com/icampus-wildau/nao-fair-frontend) and set `NAO_FAIR_FRONTEND_DIR` to its `dist` directory. The default is `../nao-fair-frontend/dist`. Without that build, the API still starts. For live frontend updates, run `pnpm run dev` in the frontend checkout and open [http://127.0.0.1:5173](http://127.0.0.1:5173). From a [nao-fair](https://github.com/icampus-wildau/nao-fair) checkout, `./start-nao-fair.sh` and `./start-nao-fair-dev.sh` do this.
 
@@ -55,3 +64,10 @@ uv run pytest   # with the browser extra, also a Pipecat smoke test that does no
 ```
 
 CI on Linux installs every extra. The Windows job checks the API-only environment. Robot support on Windows still needs WSL or the Dev Container, and a hardware check.
+
+## Development documentation
+
+- [AGENTS.md](AGENTS.md): change boundaries and verification guidance.
+- [GLOSSARY.md](GLOSSARY.md): domain terms shared with the UI and Standby.
+- [Current behavior](docs/behavior.md): configuration, connection, speech, dialogs, and robot handoff.
+- [ADR index](docs/adr/README.md): decision reasons and superseded history.

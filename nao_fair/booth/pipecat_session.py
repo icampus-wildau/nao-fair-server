@@ -112,7 +112,7 @@ class PipecatSession:
         external_context_reset: bool = False,
         browser_speech=None,
     ) -> None:
-        self._config = config if config is not None else AppConfig.load()
+        self._config = config if config is not None else AppConfig()
         self._nao_controller = nao_controller
         self._gladia_api_key = gladia_api_key
         self._openai_api_key = openai_api_key

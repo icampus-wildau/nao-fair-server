@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pipecat.frames.frames import Frame, LLMContextFrame, LLMUpdateSettingsFrame
@@ -11,6 +10,7 @@ from pipecat.services.openai.responses.llm import OpenAIResponsesLLMSettings
 
 import pytz
 
+from nao_fair.defaults import PERSONALITY, SYSTEM_PROMPT
 from nao_fair.booth.processors.stop_phrase import contains_stop_phrase
 from nao_fair.booth.session_log import session_log
 
@@ -19,24 +19,6 @@ if TYPE_CHECKING:
 
 StopPhraseCallback = Callable[[], Awaitable[None]]
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_PERSONALITY_PATH = _REPO_ROOT / "prompts" / "personality.md"
-_EVENT_CONTEXT_PATH = _REPO_ROOT / "prompts" / "event_context.md"
-_ANSWERING_HINTS_PATH = _REPO_ROOT / "prompts" / "answering_hints.md"
-_LOCAL_CONTEXT_PATH = _REPO_ROOT / "prompts" / "local_context.md"
-_TECHNICAL_CONTEXT_PATH = _REPO_ROOT / "prompts" / "technical_context.md"
-
-_PERSONALITY_FALLBACK = (
-    'Du bist ein NAO namens "{robot_name}" und antwortest kurz und freundlich.'
-)
-_ANSWERING_HINTS_FALLBACK = (
-    "Antworte ohne Emojis; bei unverständlicher Eingabe bitte kurz um Wiederholung."
-)
-_LOCAL_CONTEXT_FALLBACK = (
-    "Du befindest dich im Showroom Telematik an der TH Wildau."
-)
-_TECHNICAL_CONTEXT_FALLBACK = 'Du bist ein NAO-Roboter namens "{robot_name}".'
-
 _WAVE_INSTRUCTION = (
     "Wenn jemand dich bittet zu winken oder zu grüßen, rufe das Werkzeug wave "
     "mit der korrekten Seite auf. Wenn jemand sich verabschiedet, rufe das "
@@ -44,67 +26,6 @@ _WAVE_INSTRUCTION = (
     "Bei Ablehnung oder Nein rufe das Werkzeug shake auf. Bestätige die Geste "
     "in einem kurzen Satz."
 )
-
-
-def _strip_html_comments(text: str) -> str:
-    result: list[str] = []
-    index = 0
-    while index < len(text):
-        start = text.find("<!--", index)
-        if start == -1:
-            result.append(text[index:])
-            break
-        result.append(text[index:start])
-        end = text.find("-->", start + 4)
-        if end == -1:
-            break
-        index = end + 3
-    return "".join(result)
-
-
-def _load_text_file(path: Path) -> str | None:
-    if not path.is_file():
-        return None
-    text = _strip_html_comments(path.read_text(encoding="utf-8"))
-    if not text.strip():
-        return None
-    return text
-
-
-def _load_substituted(path: Path, robot_name: str, fallback: str) -> str:
-    raw = _load_text_file(path)
-    if raw is None:
-        return fallback.format(robot_name=robot_name)
-    return raw.replace("{robot_name}", robot_name)
-
-
-def _load_personality(robot_name: str) -> str:
-    return _load_substituted(_PERSONALITY_PATH, robot_name, _PERSONALITY_FALLBACK)
-
-
-def _load_answering_hints(robot_name: str) -> str:
-    return _load_substituted(
-        _ANSWERING_HINTS_PATH, robot_name, _ANSWERING_HINTS_FALLBACK
-    )
-
-
-def _load_local_context(robot_name: str) -> str:
-    return _load_substituted(
-        _LOCAL_CONTEXT_PATH, robot_name, _LOCAL_CONTEXT_FALLBACK
-    )
-
-
-def _load_technical_context(robot_name: str, *, mention_wave_tool: bool) -> str:
-    technical = _load_substituted(
-        _TECHNICAL_CONTEXT_PATH, robot_name, _TECHNICAL_CONTEXT_FALLBACK
-    )
-    if mention_wave_tool:
-        technical = f"{technical.rstrip()}\n{_WAVE_INSTRUCTION}"
-    return technical
-
-
-def _load_event_context() -> str | None:
-    return _load_text_file(_EVENT_CONTEXT_PATH)
 
 
 class NaoSystemInstruction:
@@ -145,21 +66,11 @@ class NaoSystemInstruction:
             sections = list(self._sections_provider())
         else:
             sections = [
-                _load_personality(self.robot_name),
-                _load_answering_hints(self.robot_name),
+                PERSONALITY.replace("{robot_name}", self.robot_name),
+                SYSTEM_PROMPT,
             ]
-
-            event_context = _load_event_context()
-            if event_context is not None:
-                sections.append(event_context)
-
-            sections.append(_load_local_context(self.robot_name))
-            sections.append(
-                _load_technical_context(
-                    self.robot_name,
-                    mention_wave_tool=self.mention_wave_tool,
-                )
-            )
+            if self.mention_wave_tool:
+                sections.append(_WAVE_INSTRUCTION)
         sections.append(
             f"""## Zeitlicher Kontext:
 - Uhrzeit: {current_time}

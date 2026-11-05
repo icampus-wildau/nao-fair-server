@@ -49,7 +49,7 @@ def test_event_stream_picture_then_live_reports(tmp_path) -> None:
             }
             assert picture["conversation_state"] == "idle"
             assert picture["transcript"] == []
-            assert picture["active_setup_id"]
+            assert picture["active_setup_id"] is None
             assert "battery" not in picture
             assert "battery" not in picture["connection"]
             assert picture["known_robots"] == []

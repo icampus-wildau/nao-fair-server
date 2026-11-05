@@ -83,11 +83,12 @@ def test_applying_interactions_can_turn_autostart_off_and_a_scenario_keeps_it(tm
         )
         assert result.status_code == 200
         assert result.json()["applied"]["autostart_enabled"] is False
-        scenario = client.get("/api/scenarios").json()[0]
-        saved = client.put(
-            f"/api/scenarios/{scenario['id']}",
-            json={"name": scenario["name"], "description": scenario["description"], **{key: scenario[key] for key in scenario if key not in ("id", "name", "description")}, "autostart_enabled": False},
-        )
+        from nao_fair.models import LlmDraft
+        applied = result.json()["applied"]
+        scenario = {key: applied[key] for key in LlmDraft.model_fields}
+        saved = client.post("/api/scenarios", json={
+            **scenario, "name": "Test", "triggers": applied["triggers"], "autostart_enabled": False,
+        })
         assert saved.status_code == 200
         assert saved.json()["autostart_enabled"] is False
 

@@ -218,7 +218,7 @@ class Store:
         )
         self.conn.commit()
 
-    def insert_seed(self, *, content: list[dict], scenario: dict, applied: Applied, active_setup_id: str) -> None:
+    def insert_seed(self, *, content: list[dict], applied: Applied) -> None:
         with self._lock:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
@@ -235,23 +235,12 @@ class Store:
                         (item["id"], item["kind"], item["name"], item["markdown"], item["updated_at"]),
                     )
                 self.conn.execute(
-                    "INSERT INTO scenarios(id, name, description, document, updated_at) "
-                    "VALUES(?, ?, ?, ?, ?)",
-                    (
-                        scenario["id"],
-                        scenario["name"],
-                        scenario["description"],
-                        json.dumps(scenario["document"]),
-                        scenario["updated_at"],
-                    ),
-                )
-                self.conn.execute(
                     "INSERT INTO meta(key, value) VALUES('applied', ?)",
                     (applied.model_dump_json(),),
                 )
                 self.conn.execute(
                     "INSERT INTO meta(key, value) VALUES('active_setup_id', ?)",
-                    (active_setup_id,),
+                    ("",),
                 )
                 self.conn.execute(
                     "INSERT INTO meta(key, value) VALUES('scenarios_ready', '1')"

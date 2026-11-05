@@ -15,8 +15,6 @@ class Settings:
     port: int = 8000
     db_path: Path = _REPO_ROOT / "data" / "nao-fair.sqlite"
     secrets_path: Path = _REPO_ROOT / "data" / "operator-secrets.json"
-    config_path: Path = _REPO_ROOT / "config.toml"
-    prompts_dir: Path = _REPO_ROOT / "prompts"
     bridge_port: int = 8765
     nao_ports: tuple[int, ...] = (9559, 9561)
     bridge_token: str = ""
@@ -36,8 +34,6 @@ class Settings:
                     str(_REPO_ROOT / "data" / "operator-secrets.json"),
                 )
             ),
-            config_path=Path(os.environ.get("NAO_FAIR_CONFIG", str(_REPO_ROOT / "config.toml"))),
-            prompts_dir=Path(os.environ.get("NAO_FAIR_PROMPTS", str(_REPO_ROOT / "prompts"))),
             bridge_port=int(os.environ.get("NAO_FAIR_BRIDGE_PORT", "8765")),
             nao_ports=parsed or (9559, 9561),
             bridge_token=os.environ.get("NAO_BRIDGE_TOKEN", ""),
